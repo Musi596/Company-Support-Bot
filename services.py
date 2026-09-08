@@ -17,6 +17,26 @@ async def get_all_admins(pool: asyncpg.Pool):
         rows = await conn.fetch("SELECT user_id FROM users WHERE role = 'Admin';")
         return [row['user_id'] for row in rows]
 
+async def save_or_update_chat(pool: asyncpg.Pool, chat_id: int, chat_type: str, title: str | None = None):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO bot_chats (chat_id, chat_type, title)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (chat_id) DO UPDATE SET
+                chat_type = EXCLUDED.chat_type,
+                title = EXCLUDED.title;
+        """, chat_id, chat_type, title)
+
+async def get_broadcast_chat_ids(pool: asyncpg.Pool):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT chat_id
+            FROM bot_chats
+            WHERE chat_type IN ('group', 'supergroup', 'channel')
+            ORDER BY chat_id;
+        """)
+        return [row['chat_id'] for row in rows]
+
 async def get_open_tickets(pool: asyncpg.Pool):
     async with pool.acquire() as conn:
         rows = await conn.fetch("""

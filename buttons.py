@@ -6,7 +6,11 @@ def get_admin_main_keyboard() -> InlineKeyboardMarkup:
         text="📋 Посмотреть вопросы и жалобы",
         callback_data="admin_open_tickets"
     )
-    return InlineKeyboardMarkup(inline_keyboard=[[btn_view]])
+    btn_broadcast = InlineKeyboardButton(
+        text="📣 Рассылка",
+        callback_data="admin_broadcast"
+    )
+    return InlineKeyboardMarkup(inline_keyboard=[[btn_view], [btn_broadcast]])
 
 
 def get_admin_action_keyboard(ticket_id: int) -> InlineKeyboardMarkup:

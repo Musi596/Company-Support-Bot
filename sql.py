@@ -35,5 +35,12 @@ async def create_tables(pool):
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 answered_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
                 CONSTRAINT fk_tickets_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS bot_chats (
+                chat_id BIGINT PRIMARY KEY,
+                chat_type VARCHAR(40) NOT NULL,
+                title VARCHAR(255) DEFAULT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );""")
         print("Tables Created")

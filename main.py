@@ -3,10 +3,11 @@ import os
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, BotCommand
+from aiogram.types import Message, CallbackQuery, BotCommand, ChatMemberUpdated
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from fsm import *
 
 import sql
 import services
@@ -17,11 +18,29 @@ load_dotenv()
 bot = Bot(token=os.getenv('API_TOKEN'))
 dp = Dispatcher()
 
-class ReportStates(StatesGroup):
-    waiting_for_question = State()
+@dp.my_chat_member()
+async def register_group_chat(event: ChatMemberUpdated):
+    if event.chat.type not in {'group', 'supergroup', 'channel'}:
+        return
 
-class AdminStates(StatesGroup):
-    waiting_for_answer = State()
+    pool = dp['db_pool']
+    await services.save_or_update_chat(
+        pool,
+        event.chat.id,
+        event.chat.type,
+        event.chat.title or event.chat.username
+    )
+
+
+@dp.message(F.chat.type.in_({'group', 'supergroup', 'channel'}) & ~F.text.startswith('/'))
+async def register_group_chat_message(message: Message):
+    pool = dp['db_pool']
+    await services.save_or_update_chat(
+        pool,
+        message.chat.id,
+        message.chat.type,
+        message.chat.title or message.chat.username
+    )
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
@@ -85,6 +104,75 @@ async def admin_open_tickets(callback: CallbackQuery):
     text = "📋 *Неотвеченные вопросы и жалобы:*\n\n" + "\n".join(ticket_lines)
     await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=buttons.get_admin_ticket_list_keyboard(tickets))
     await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
+    pool = dp['db_pool']
+    admin_id = callback.from_user.id
+
+    if not await services.is_admin(pool, admin_id):
+        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        return
+
+    await callback.message.answer(
+        "📣 Отправьте сообщение для рассылки по всем группам, где есть бот.\n\n"
+        "Можно отправить: \n"
+        "- только текст;\n"
+        "- только фото;\n"
+        "- фото с текстом в подписи.\n\n"
+        "Для отмены напишите /cancel"
+    )
+    await state.set_state(BroadcastStates.waiting_for_broadcast)
+    await callback.answer()
+
+
+@dp.message(BroadcastStates.waiting_for_broadcast, F.text | F.photo)
+async def process_broadcast_message(message: Message, state: FSMContext):
+    pool = dp['db_pool']
+    if not await services.is_admin(pool, message.from_user.id):
+        await message.answer("⚠️ У вас нет прав на рассылку.")
+        return
+
+    if message.text and message.text.strip().lower() == '/cancel':
+        await state.clear()
+        await message.answer("❌ Рассылка отменена.")
+        return
+
+    text = message.caption if message.photo else message.text
+    photo_file_id = message.photo[-1].file_id if message.photo else None
+
+    if not text and not photo_file_id:
+        await message.answer("❌ Нечего отправлять. Пришлите текст или фото.")
+        return
+
+    chats = await services.get_broadcast_chat_ids(pool)
+    if not chats:
+        await state.clear()
+        await message.answer("📭 В базе нет групп, куда можно отправить рассылку.")
+        return
+
+    sent_count = 0
+    failed_count = 0
+
+    for chat_id in chats:
+        try:
+            if photo_file_id and text:
+                await bot.send_photo(chat_id, photo=photo_file_id, caption=text)
+            elif photo_file_id:
+                await bot.send_photo(chat_id, photo=photo_file_id)
+            elif text:
+                await bot.send_message(chat_id, text)
+            sent_count += 1
+        except Exception:
+            failed_count += 1
+
+    await state.clear()
+    await message.answer(
+        f"✅ Рассылка завершена.\n"
+        f"Отправлено в {sent_count} чатов.\n"
+        f"Не доставлено: {failed_count}."
+    )
 
 
 @dp.callback_query(F.data.startswith("ticket_select:"))
