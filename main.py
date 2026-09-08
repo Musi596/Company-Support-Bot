@@ -6,7 +6,6 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, BotCommand, ChatMemberUpdated
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from fsm import *
 
 import sql
