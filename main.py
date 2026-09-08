@@ -3,10 +3,10 @@ import os
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, BotCommand, ChatMemberUpdated
+from aiogram.types import Message, CallbackQuery, BotCommand
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
-from fsm import *
+from aiogram.fsm.state import State, StatesGroup
 
 import sql
 import services
@@ -17,29 +17,39 @@ load_dotenv()
 bot = Bot(token=os.getenv('API_TOKEN'))
 dp = Dispatcher()
 
-@dp.my_chat_member()
-async def register_group_chat(event: ChatMemberUpdated):
-    if event.chat.type not in {'group', 'supergroup', 'channel'}:
+class ReportStates(StatesGroup):
+    waiting_for_question = State()
+
+class AdminStates(StatesGroup):
+    waiting_for_answer = State()
+
+class BroadcastStates(StatesGroup):
+    waiting_for_broadcast = State()
+
+
+@dp.message(Command("add_group"))
+async def add_group_to_broadcast(message: Message):
+    if message.chat.type not in {'group', 'supergroup', 'channel'}:
+        await message.answer("⚠️ Вы не находитесь в группе. Команда /add_group доступна только внутри группы.")
         return
 
     pool = dp['db_pool']
-    await services.save_or_update_chat(
-        pool,
-        event.chat.id,
-        event.chat.type,
-        event.chat.title or event.chat.username
-    )
+    if not await services.is_admin(pool, message.from_user.id):
+        await message.answer("⚠️ Только администратор бота может подключать эту группу к рассылке.")
+        return
 
-
-@dp.message(F.chat.type.in_({'group', 'supergroup', 'channel'}) & ~F.text.startswith('/'))
-async def register_group_chat_message(message: Message):
-    pool = dp['db_pool']
     await services.save_or_update_chat(
         pool,
         message.chat.id,
         message.chat.type,
         message.chat.title or message.chat.username
     )
+
+    await message.answer(
+        "✅ Группа добавлена в список для рассылок. "
+        "Теперь бот сможет отправлять сюда сообщения."
+    )
+
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
@@ -328,7 +338,8 @@ async def main():
     await bot.set_my_commands([
         BotCommand(command="start", description="Перезапустить бота"),
         BotCommand(command="help", description="Инструкция"),
-        BotCommand(command="report", description="Отправить обращение")
+        BotCommand(command="report", description="Отправить обращение"),
+        BotCommand(command="add_group", description="Подключить группу к рассылке")
     ])
     
     await dp.start_polling(bot)
