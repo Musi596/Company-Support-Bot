@@ -17,6 +17,16 @@ async def get_all_admins(pool: asyncpg.Pool):
         rows = await conn.fetch("SELECT user_id FROM users WHERE role = 'Admin';")
         return [row['user_id'] for row in rows]
 
+async def get_open_tickets(pool: asyncpg.Pool):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT *
+            FROM tickets
+            WHERE status = 'open'
+            ORDER BY created_at DESC;
+        """)
+        return rows
+
 async def create_ticket(pool: asyncpg.Pool, user_id: int, user_name: str, question_text: str):
     async with pool.acquire() as conn:
         ticket_id = await conn.fetchval("""

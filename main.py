@@ -27,11 +27,24 @@ class AdminStates(StatesGroup):
 async def cmd_start(message: Message):
     pool = dp['db_pool']
     await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
-    
+
+    is_admin = await services.is_admin(pool, message.from_user.id)
+    if is_admin:
+        await message.answer_sticker(
+            sticker='CAACAgIAAxkBAAER3dRqns8OAAFAJ_41_64myZOJ35l9DIQAAkaFAAJtfQABSYjWiVDXg4rkPQQ'
+        )
+        await message.answer(
+            "👑 *Добро пожаловать, администратор!*\n\n"
+            "Вы можете просматривать новые вопросы и жалобы, отвечать на них и закрывать обращения.",
+            parse_mode="Markdown",
+            reply_markup=buttons.get_admin_main_keyboard()
+        )
+        return
+
     await message.answer_sticker(
         sticker='CAACAgIAAxkBAAER3dRqns8OAAFAJ_41_64myZOJ35l9DIQAAkaFAAJtfQABSYjWiVDXg4rkPQQ'
     )
-    
+
     await message.answer(
         "✨ *Добро пожаловать в SoftClub!* 🚀\n\n"
         "Рады видеть вас в нашем учебном центре программирования! "
@@ -42,6 +55,61 @@ async def cmd_start(message: Message):
         "💡 _Выберите нужную команду выше или введите её._",
         parse_mode="Markdown"
     )
+
+
+@dp.callback_query(F.data == "admin_open_tickets")
+async def admin_open_tickets(callback: CallbackQuery):
+    pool = dp['db_pool']
+    admin_id = callback.from_user.id
+
+    if not await services.is_admin(pool, admin_id):
+        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        return
+
+    tickets = await services.get_open_tickets(pool)
+    if not tickets:
+        await callback.message.edit_text(
+            "📭 Нет новых вопросов и жалоб. Все обращения уже закрыты.",
+            reply_markup=buttons.get_admin_main_keyboard()
+        )
+        await callback.answer("Нет новых обращений.")
+        return
+
+    ticket_lines = []
+    for ticket in tickets:
+        preview = ticket['question'].replace('\n', ' ')[:70]
+        if len(ticket['question']) > 70:
+            preview += '...'
+        ticket_lines.append(f"#{ticket['ticket_id']} • {ticket['user_name']} • {preview}")
+
+    text = "📋 *Неотвеченные вопросы и жалобы:*\n\n" + "\n".join(ticket_lines)
+    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=buttons.get_admin_ticket_list_keyboard(tickets))
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("ticket_select:"))
+async def ticket_select(callback: CallbackQuery):
+    pool = dp['db_pool']
+    ticket_id = int(callback.data.split(':')[1])
+
+    if not await services.is_admin(pool, callback.from_user.id):
+        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        return
+
+    ticket = await services.get_ticket_by_id(pool, ticket_id)
+    if not ticket:
+        await callback.answer("⚠️ Обращение не найдено.", show_alert=True)
+        return
+
+    message_text = (
+        f"🧾 *Обращение #{ticket['ticket_id']}*\n\n"
+        f"👤 *От:* {ticket['user_name']} (ID: `{ticket['user_id']}`)\n"
+        f"🕒 *Дата:* {ticket['created_at'].strftime('%d.%m.%Y %H:%M')}\n\n"
+        f"📝 *Текст:*\n_{ticket['question']}_"
+    )
+    await callback.message.edit_text(message_text, parse_mode="Markdown", reply_markup=buttons.get_ticket_detail_keyboard(ticket_id))
+    await callback.answer()
+
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
