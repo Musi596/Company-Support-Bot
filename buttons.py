@@ -35,3 +35,21 @@ def get_ticket_detail_keyboard(ticket_id: int) -> InlineKeyboardMarkup:
     btn_reply = InlineKeyboardButton(text="💬 Ответить", callback_data=f"reply_tk:{ticket_id}")
     btn_back = InlineKeyboardButton(text="🔙 Назад", callback_data="admin_open_tickets")
     return InlineKeyboardMarkup(inline_keyboard=[[btn_reply], [btn_back]])
+
+
+def get_courses_language_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🇹🇯 Тоҷикӣ", callback_data="courses_lang:tj"),
+            InlineKeyboardButton(text="🇷🇺 Русский", callback_data="courses_lang:ru")
+        ],
+        [
+            InlineKeyboardButton(text="🇬🇧 English", callback_data="courses_lang:en")
+        ]
+    ])
+
+
+def get_courses_back_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔙 Назад к выбору языка", callback_data="courses_menu")
+    ]])

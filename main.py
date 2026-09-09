@@ -26,6 +26,10 @@ class BroadcastStates(StatesGroup):
     waiting_for_broadcast = State()
 
 
+def is_group_chat(chat) -> bool:
+    return chat.type in {'group', 'supergroup', 'channel'}
+
+
 @dp.message(Command("add_group"))
 async def add_group_to_broadcast(message: Message):
     if message.chat.type not in {'group', 'supergroup', 'channel'}:
@@ -50,14 +54,263 @@ async def add_group_to_broadcast(message: Message):
     )
 
 
+@dp.message(Command("courses"))
+async def cmd_courses(message: Message):
+    if is_group_chat(message.chat):
+        return
+
+    await message.answer(
+        "Выберите язык, на котором хотите узнать о курсах:",
+        reply_markup=buttons.get_courses_language_keyboard()
+    )
+
+
+@dp.callback_query(F.data == "courses_menu")
+async def courses_menu(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Выберите язык, на котором хотите узнать о курсах:",
+        reply_markup=buttons.get_courses_language_keyboard()
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("courses_lang:"))
+async def courses_language(callback: CallbackQuery):
+    lang = callback.data.split(":")[1]
+
+    if lang == "tj":
+        text = """🚀 Омӯзиши IT ва Технологияҳои Муосир!
+
+Ояндаи худро аз ҳамин имрӯз созед! Мо барои шумо курсҳои актуалӣ ва пурмуҳтаворо омода намудем, ки дар онҳо на танҳо барномасозиву дизайн, балки истифодаи AI-ро низ меомӯзед.
+
+1️⃣ Курси Асосҳои AI
+- Тарзи дурусти навиштани Prompt
+- Кор бо ChatGPT, Claude ва Gemini
+- Автоматизатсия: Zapier, Make, n8n
+- Моделҳои офлайн AI (LLaMA)
+- Сохтани AI Agent-и шахсӣ
+- AI барои кор бо матн, сурат ва видео
+Давомнокӣ: 1 моҳ | Дарсҳо: 3 рӯз дар як ҳафта | Вақт: 18:00 – 20:00
+
+2️⃣ Барномасозӣ аз 0
+- C++
+- HTML/CSS & GitHub
+- Истифодаи AI барои омӯзиш
+Давомнокӣ: 2 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 16:00 – 18:00 | 18:00 – 20:00
+
+3️⃣ Курси Python
+- Python & PostgreSQL
+- Telegram Bot & FastAPI
+- Django REST Framework
+- Clean Architecture
+- AI Tools: ChatGPT, Claude, Gemini, Stitch AI, MCP Servers
+Давомнокӣ: 5 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 16:00 – 18:00 | 18:00 – 20:00
+
+4️⃣ Курси Frontend
+- JavaScript & React
+- TypeScript & Next.js
+- Clean Architecture
+- AI Tools
+Давомнокӣ: 5 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 16:00 – 18:00 | 18:00 – 20:00
+
+5️⃣ Курси Golang
+- Golang & PostgreSQL
+- Clean Architecture
+- Microservices (gRPC) & Redis
+- Deployment and DevOps foundation
+- RabbitMQ & AI Tools
+Давомнокӣ: 5 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 18:00 – 20:00
+
+6️⃣ Курси C#
+- C# & PostgreSQL
+- .NET Framework
+- Clean Architecture
+- AI Tools
+Давомнокӣ: 5 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 16:00 – 18:00 | 18:00 – 20:00
+
+7️⃣ Mobile Development
+- Dart & Flutter
+- State Management
+- Clean Architecture
+- AI Tools
+Давомнокӣ: 4 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 16:00 – 18:00 | 18:00 – 20:00
+
+8️⃣ Graphic Design & UX/UI
+- Photoshop, CorelDRAW, Illustrator
+- Blender, After Effects
+- Figma
+- Canva ва AI tools барои дизайнерҳо
+Давомнокӣ: 4 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 16:00 – 18:00 | 18:00 – 20:00
+
+9️⃣ Компьютерная грамотность для сотрудников
+- Word, Excel, PowerPoint
+- Google Docs ва Canva
+- Keyboard Skills
+- AI дар фаъолияти корӣ
+- Автоматизатсияи офисӣ
+Давомнокӣ: 1 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00
+
+🔗 Барои сабти ном ба линки дар шапкаи профил гузаред.
+📩 Саволҳо доред? Ба мо нависед, мо бо хушнудӣ ба шумо кумак мекунем!"""
+    elif lang == "ru":
+        text = """🚀 Обучение IT и Современным Технологиям!
+
+Создай свое будущее уже сегодня! Мы подготовили актуальные и насыщенные курсы, где вы освоите не только программирование и дизайн, но и работу с AI.
+
+1️⃣ Основы AI
+- Prompt Engineering
+- Работа с ChatGPT, Claude и Gemini
+- Автоматизация: Zapier, Make, n8n
+- Офлайн-модели (LLaMA)
+- Создание собственного AI-агента
+- AI для текста, изображений и видео
+Длительность: 1 месяц | Занятия: 3 дня в неделю | Время: 18:00 – 20:00
+
+2️⃣ Программирование с 0
+- C++
+- HTML/CSS & GitHub
+- Использование AI для обучения
+Длительность: 2 месяца | Занятия: 6 дней в неделю | Время: 16:00 – 18:00 | 18:00 – 20:00
+
+3️⃣ Python Course
+- Python & PostgreSQL
+- Telegram Bot & FastAPI
+- Django REST Framework
+- Clean Architecture
+- AI Tools: ChatGPT, Claude, Gemini, Stitch AI, MCP Servers
+Длительность: 5 месяцев | Занятия: 6 дней в неделю | Время: 16:00 – 18:00 | 18:00 – 20:00
+
+4️⃣ Frontend Course
+- JavaScript & React
+- TypeScript & Next.js
+- Clean Architecture
+- AI Tools
+Длительность: 5 месяцев | Занятия: 6 дней в неделю | Время: 16:00 – 18:00 | 18:00 – 20:00
+
+5️⃣ Golang Course
+- Golang & PostgreSQL
+- Clean Architecture
+- Microservices (gRPC) & Redis
+- Deployment and DevOps
+- RabbitMQ & AI Tools
+Длительность: 5 месяцев | Занятия: 6 дней в неделю | Время: 18:00 – 20:00
+
+6️⃣ C# Course
+- C# & PostgreSQL
+- .NET Framework
+- Clean Architecture
+- AI Tools
+Длительность: 5 месяцев | Занятия: 6 дней в неделю | Время: 16:00 – 18:00 | 18:00 – 20:00
+
+7️⃣ Mobile Development
+- Dart & Flutter
+- State Management
+- Clean Architecture
+- AI Tools
+Длительность: 4 месяца | Занятия: 6 дней в неделю | Время: 16:00 – 18:00 | 18:00 – 20:00
+
+8️⃣ Graphic Design & UX/UI
+- Photoshop, CorelDRAW, Illustrator
+- Blender, After Effects
+- Figma
+- Canva и AI инструменты для дизайнеров
+Длительность: 4 месяца | Занятия: 6 дней в неделю | Время: 16:00 – 18:00 | 18:00 – 20:00
+
+9️⃣ Компьютерная грамотность для сотрудников
+- Word, Excel, PowerPoint
+- Google Docs и Canva
+- Навыки работы с клавиатурой
+- AI в ежедневной работе
+- Автоматизация офисных задач
+Длительность: 1 месяц | Занятия: 6 дней в неделю | Время: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00
+
+🔗 Для регистрации переходите по ссылке в шапке профиля!
+📩 Есть вопросы? Напишите нам, и мы с радостью проконсультируем вас!"""
+    else:
+        text = """🚀 Master IT & Modern Technologies!
+
+Build your future today! We have prepared comprehensive, up-to-date courses where you will master not only programming and design, but also AI tools.
+
+1️⃣ Fundamentals of AI
+- Prompt Engineering
+- ChatGPT, Claude, and Gemini
+- Automation: Zapier, Make, n8n
+- Offline AI Models (LLaMA)
+- Building custom AI agents
+- AI for text, image and video processing
+Duration: 1 month | Schedule: 3 days per week | Time: 18:00 – 20:00
+
+2️⃣ Programming from Scratch
+- C++
+- HTML/CSS & GitHub
+- AI-powered learning
+Duration: 2 months | Schedule: 6 days per week | Time: 16:00 – 18:00 | 18:00 – 20:00
+
+3️⃣ Python Course
+- Python & PostgreSQL
+- Telegram Bot & FastAPI
+- Django REST Framework
+- Clean Architecture
+- AI Tools: ChatGPT, Claude, Gemini, Stitch AI, MCP Servers
+Duration: 5 months | Schedule: 6 days per week | Time: 16:00 – 18:00 | 18:00 – 20:00
+
+4️⃣ Frontend Course
+- JavaScript & React
+- TypeScript & Next.js
+- Clean Architecture
+- Developer AI Tools
+Duration: 5 months | Schedule: 6 days per week | Time: 16:00 – 18:00 | 18:00 – 20:00
+
+5️⃣ Golang Course
+- Golang & PostgreSQL
+- Clean Architecture
+- Microservices (gRPC) & Redis
+- Deployment and DevOps
+- RabbitMQ & AI Tools
+Duration: 5 months | Schedule: 6 days per week | Time: 18:00 – 20:00
+
+6️⃣ C# Course
+- C# & PostgreSQL
+- .NET Framework
+- Clean Architecture
+- AI Tools
+Duration: 5 months | Schedule: 6 days per week | Time: 16:00 – 18:00 | 18:00 – 20:00
+
+7️⃣ Mobile Development
+- Dart & Flutter
+- State Management
+- Clean Architecture
+- AI Tools
+Duration: 4 months | Schedule: 6 days per week | Time: 16:00 – 18:00 | 18:00 – 20:00
+
+8️⃣ Graphic Design & UX/UI
+- Photoshop, CorelDRAW, Illustrator
+- Blender & After Effects
+- Figma
+- Canva and AI tools for designers
+Duration: 4 months | Schedule: 6 days per week | Time: 16:00 – 18:00 | 18:00 – 20:00
+
+9️⃣ Computer Basics for Employees
+- Word, Excel, PowerPoint
+- Google Docs & Canva
+- Keyboard mastery
+- AI in daily work
+- Office workflow automation
+Duration: 1 month | Schedule: 6 days per week | Time: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00
+
+🔗 Click the link in our bio to register!
+📩 Have questions? Message us anytime for a free consultation!"""
+
+    await callback.message.edit_text(text, reply_markup=buttons.get_courses_back_keyboard())
+    await callback.answer()
+
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
+    if is_group_chat(message.chat):
+        return
+
     pool = dp['db_pool']
-
-    if message.chat.type in {'group', 'supergroup', 'channel'}:
-        if not await services.is_chat_registered(pool, message.chat.id):
-            return
-
     await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
 
     is_admin = await services.is_admin(pool, message.from_user.id)
@@ -214,35 +467,32 @@ async def ticket_select(callback: CallbackQuery):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
-    pool = dp['db_pool']
-    if message.chat.type in {'group', 'supergroup', 'channel'}:
-        if not await services.is_chat_registered(pool, message.chat.id):
-            return
+    if is_group_chat(message.chat):
+        return
 
     await message.answer("📚 *Инструкция по использованию бота SoftClub Support*\n\n"
                          "Этот бот — прямая связь с администрацией учебного центра.\n\n"
                          "👉 Чтобы отправить вопрос, отзыв или жалобу, нажмите /report.\n"
-                         "👉 Чтобы перезапустить бота, нажмите /start.",parse_mode='Markdown')
+                         "👉 Чтобы перезапустить бота, нажмите /start."
+                         "👉 Чтобы посмотреть информацию про курсы /courses",parse_mode='Markdown')
 
 @dp.message(Command("report"))
 async def cmd_report(message: Message, state: FSMContext):
-    pool = dp['db_pool']
-    if message.chat.type in {'group', 'supergroup', 'channel'}:
-        if not await services.is_chat_registered(pool, message.chat.id):
-            return
+    if is_group_chat(message.chat):
+        return
 
+    pool = dp['db_pool']
     await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
     await message.answer("📝 Пожалуйста, напишите ваш вопрос или жалобу в одном текстовом сообщении 👇")
     await state.set_state(ReportStates.waiting_for_question)
 
 @dp.message(ReportStates.waiting_for_question, F.text)
 async def process_question(message: Message, state: FSMContext):
-    pool = dp['db_pool']
-    if message.chat.type in {'group', 'supergroup', 'channel'}:
-        if not await services.is_chat_registered(pool, message.chat.id):
-            await state.clear()
-            return
+    if is_group_chat(message.chat):
+        await state.clear()
+        return
 
+    pool = dp['db_pool']
     question_text = message.text
     user_id = message.from_user.id
     user_name = message.from_user.full_name
@@ -357,6 +607,7 @@ async def main():
         BotCommand(command="start", description="Перезапустить бота"),
         BotCommand(command="help", description="Инструкция"),
         BotCommand(command="report", description="Отправить обращение"),
+        BotCommand(command="courses", description="Узнать о курсах"),
         BotCommand(command="add_group", description="Подключить группу к рассылке")
     ])
 
