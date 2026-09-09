@@ -37,6 +37,14 @@ async def get_broadcast_chat_ids(pool: asyncpg.Pool):
         """)
         return [row['chat_id'] for row in rows]
 
+async def is_chat_registered(pool: asyncpg.Pool, chat_id: int):
+    async with pool.acquire() as conn:
+        exists = await conn.fetchval(
+            "SELECT EXISTS(SELECT 1 FROM bot_chats WHERE chat_id = $1);",
+            chat_id
+        )
+        return bool(exists)
+
 async def get_open_tickets(pool: asyncpg.Pool):
     async with pool.acquire() as conn:
         rows = await conn.fetch("""

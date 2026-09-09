@@ -1,7 +1,6 @@
 import asyncio
 import os
 from dotenv import load_dotenv
-
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, BotCommand
 from aiogram.filters import CommandStart, Command
@@ -54,6 +53,11 @@ async def add_group_to_broadcast(message: Message):
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     pool = dp['db_pool']
+
+    if message.chat.type in {'group', 'supergroup', 'channel'}:
+        if not await services.is_chat_registered(pool, message.chat.id):
+            return
+
     await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
 
     is_admin = await services.is_admin(pool, message.from_user.id)
@@ -210,6 +214,11 @@ async def ticket_select(callback: CallbackQuery):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
+    pool = dp['db_pool']
+    if message.chat.type in {'group', 'supergroup', 'channel'}:
+        if not await services.is_chat_registered(pool, message.chat.id):
+            return
+
     await message.answer("📚 *Инструкция по использованию бота SoftClub Support*\n\n"
                          "Этот бот — прямая связь с администрацией учебного центра.\n\n"
                          "👉 Чтобы отправить вопрос, отзыв или жалобу, нажмите /report.\n"
@@ -218,6 +227,10 @@ async def cmd_help(message: Message):
 @dp.message(Command("report"))
 async def cmd_report(message: Message, state: FSMContext):
     pool = dp['db_pool']
+    if message.chat.type in {'group', 'supergroup', 'channel'}:
+        if not await services.is_chat_registered(pool, message.chat.id):
+            return
+
     await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
     await message.answer("📝 Пожалуйста, напишите ваш вопрос или жалобу в одном текстовом сообщении 👇")
     await state.set_state(ReportStates.waiting_for_question)
@@ -225,6 +238,11 @@ async def cmd_report(message: Message, state: FSMContext):
 @dp.message(ReportStates.waiting_for_question, F.text)
 async def process_question(message: Message, state: FSMContext):
     pool = dp['db_pool']
+    if message.chat.type in {'group', 'supergroup', 'channel'}:
+        if not await services.is_chat_registered(pool, message.chat.id):
+            await state.clear()
+            return
+
     question_text = message.text
     user_id = message.from_user.id
     user_name = message.from_user.full_name
@@ -341,7 +359,7 @@ async def main():
         BotCommand(command="report", description="Отправить обращение"),
         BotCommand(command="add_group", description="Подключить группу к рассылке")
     ])
-    
+
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
