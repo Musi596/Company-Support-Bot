@@ -1,172 +1,166 @@
-# Security Policy
+# 🛡️ Security Policy
 
 ## Scope
 
-This document defines the security requirements for the SoftClub support Telegram bot and associated PostgreSQL database.
+This document defines the security requirements and threat mitigation strategies for the **SoftClub Support Telegram Bot** and its associated PostgreSQL database.
 
-The project handles:
-- user messages and support tickets;
-- admin replies;
-- Telegram user IDs and names;
-- database records with user and ticket data;
-- environment variables with secrets.
+The system processes and manages:
+* User support tickets and message histories
+* Administrator responses and ticket state transitions
+* Telegram user identities (`user_id`, `username`, display names)
+* Authorized group chat IDs and access rights
+* Environment variables and deployment credentials
+
+---
 
 ## Supported Versions
 
-The project currently supports the latest committed version on the main branch.
+Only official release versions and the primary deployment branch receive active security updates and patches.
 
-Only the latest revision is considered supported for security fixes.
+| Version | Supported | Notes |
+| :--- | :--- | :--- |
+| `v1.2.x` (Latest Release) | ✅ Yes | Current stable release |
+| `v1.0.x` | ✅ Yes | Production-ready baseline |
+| Latest `main` branch | ✅ Yes | Active development |
+| Pre-releases (`v1.x.x-rc`) | ⚠️ Testing only | Not recommended for production |
+| Legacy tags / commits | ❌ No | Please upgrade to the latest patch |
+
+---
 
 ## Core Security Principles
 
-1. Secrets must never be stored in source code.
-2. Administrative access must be limited to trusted user IDs only.
-3. Telegram input must be treated as untrusted data.
-4. Access to ticket data and admin actions must be strictly authorized.
-5. Logs must not contain personal data or secrets.
+1. **Zero Trust for Inputs**: Every Telegram message, command, and callback payload must be treated as untrusted data.
+2. **Strict Authorization**: Admin functionality must require explicit validation against trusted database records on every request.
+3. **Secret Isolation**: Secrets, tokens, and database passwords must never exist within source code or version control.
+4. **Least Privilege**: Application database users must possess only the minimum required CRUD privileges.
+5. **Data Privacy in Logs**: Logs must never capture authorization tokens, raw database credentials, or sensitive personal payload.
+
+---
 
 ## Secret Management
 
-- Store all secrets in environment variables only.
-- Use `.env` files only locally and never commit them.
-- Add `.env` and related secret files to `.gitignore`.
-- Use a production-safe secret manager in deployment environments.
+* Store all credentials in environment variables using `.env` files for local development.
+* Ensure `.env` and all secret-bearing files are explicitly declared in `.gitignore`.
+* Use safe secret injection mechanisms in production (e.g., Docker secrets, systemd environment files, or Vault).
 
-Required variables include, at minimum:
-- `API_TOKEN`
-- `DB_NAME`
-- `DB_USER`
-- `DB_PASSWORD`
-
-Example:
+### Required Environment Variables
 
 ```env
-API_TOKEN=your_telegram_bot_token
+# Telegram Configuration
+BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyZ
+
+# PostgreSQL Credentials
+DB_HOST=localhost
+DB_PORT=5432
 DB_NAME=support_bot
-DB_USER=postgres
-DB_PASSWORD=strong_password
+DB_USER=bot_app_user
+DB_PASSWORD=use_a_strong_generated_password
+
+# Access Control
+SUPERADMIN_TG_ID=123456789
 ```
 
-## Admin Access Control
+---
 
-- Only verified admin accounts may access admin functions.
-- Admin role must be assigned only through a trusted database change or secure admin setup flow.
-- The bot must validate admin rights before showing admin-only commands, buttons, and ticket actions.
-- Do not expose admin features to regular clients.
+## Admin & Group Access Control
 
-Recommended rule:
+### Command & Action Guarding
+All administrative commands, FSM states, and inline callback queries must pass strict role validation. 
 
 ```python
-if not await services.is_admin(pool, user_id):
+# Guard example for handlers and callbacks
+if not await services.is_admin(pool, event.from_user.id):
+    if isinstance(event, CallbackQuery):
+        await event.answer("Access denied.", show_alert=True)
     return
 ```
 
-This validation must be enforced for:
-- `/start` admin branch;
-- admin ticket list;
-- ticket selection;
-- reply actions;
-- skip actions;
-- ticket closing logic.
+### Mandatory Access Checks
+Enforce `is_admin` validation across:
+* `/start` administrative menu branches
+* Ticket queue navigation and inspection
+* Ticket status mutations (`reply`, `skip`, `close`)
+* Group broadcast and newsletter dispatch workflows
 
-## Input Validation and Safe Handling
+### Group Chat Isolation
+* The bot must reject commands from unauthorized group chats.
+* Group chats must only be registered via authorized administrative routines (`/add_group`).
 
-Because Telegram messages come from users, all content must be treated as untrusted.
+---
 
-Rules:
-- Do not execute user-provided text as code or SQL.
-- Do not allow raw SQL construction from message content.
-- Escape or parameterize all database queries.
-- Limit message length if necessary to prevent abuse.
-- Sanitize text before displaying to admins or users.
+## Input Validation & Database Security
 
-## Database Security
-
-- Use PostgreSQL with restricted credentials.
-- Grant the application only the required privileges.
-- Never expose the database port publicly unless required.
-- Use a private network or internal-only access in production.
-- Keep PostgreSQL updated to the latest patched version.
-
-Recommended practices:
-- use a dedicated database user for the bot;
-- separate admin and client roles in the application logic;
-- keep the `users` and `tickets` tables protected by least-privilege access.
-
-## Telegram Bot Security
-
-- Do not trust callback data blindly.
-- Validate that callback payloads match expected formats before parsing.
-- Check that the user is an admin before processing admin callbacks like `reply_tk:*` or `skip_tk:*`.
-- Reject unknown callback data and malformed ticket IDs.
-
-Example validation:
+### SQL Injection Prevention
+* Direct string concatenation or formatted strings (`f"SELECT ... {input}"`) in SQL queries are strictly prohibited.
+* Use prepared statements and parameterized queries with `asyncpg`:
 
 ```python
-if not await services.is_admin(pool, callback.from_user.id):
-    await callback.answer("Вы не администратор.", show_alert=True)
-    return
+# CORRECT
+await pool.fetch("SELECT * FROM tickets WHERE id = $1 AND status = $2", ticket_id, status)
+
+# INCORRECT (Vulnerable)
+await pool.fetch(f"SELECT * FROM tickets WHERE id = {ticket_id}")
 ```
 
-## Logging and Monitoring
+### Callback Payload Validation
+* Validate callback formats before splitting or parsing parameters.
+* Ensure ticket IDs extracted from `reply_tk:<id>` or `skip_tk:<id>` are valid integers before database queries.
 
-- Log security-relevant events such as admin actions, ticket replies, and errors.
-- Do not log full Telegram tokens, database passwords, or raw credentials.
-- Mask sensitive IDs when possible.
-- Monitor failed admin access attempts and unexpected callback usage.
+---
 
-## Rate Limiting and Abuse Control
+## Telegram Bot & Network Security
 
-- Restrict repeated bot actions to prevent spam.
-- Consider limiting:
-  - ticket creation frequency;
-  - admin reply actions;
-  - callback processing bursts.
-- Add basic anti-abuse controls if the bot is public or used by many users.
+### Webhook Security (Production)
+When operating on Webhook mode instead of Long Polling:
+* Always configure `secret_token` in `setWebhook`.
+* Validate the `X-Telegram-Bot-Api-Secret-Token` header on incoming HTTP requests.
+* Restrict incoming traffic to official Telegram IP ranges.
 
-## Data Handling
+### Rate Limiting (Anti-Spam)
+* Implement an Aiogram `BaseMiddleware` rate-limiter (Throttling) to prevent request flooding.
+* Enforce cool-down periods on ticket creation and global broadcasting commands.
 
-The bot stores user tickets and messages. This information should be handled carefully:
-- only store what is necessary;
-- keep ticket data limited to support workflow requirements;
-- avoid exposing raw ticket content to unauthorized users;
-- ensure admin reply data is protected from unauthorized access.
+---
+
+## Logging and Privacy
+
+* Never log the `BOT_TOKEN` or PostgreSQL connection strings containing passwords.
+* Log security events (e.g., unauthorized admin attempts, group registration failures) with sanitized metadata (`user_id`, `action`, `timestamp`).
+
+---
 
 ## Vulnerability Reporting
 
-If you discover a security vulnerability in this project, please report it privately and responsibly.
+If you discover a security vulnerability, please report it responsibly instead of opening a public GitHub issue.
 
-Please send details to the project maintainer via a secure channel and include:
-- description of the vulnerability;
-- affected files or code paths;
-- steps to reproduce;
-- impact assessment;
-- any suggested fix or mitigation.
+### How to Report
+Send a detailed security report directly to the maintainer:
+* **Email**: `nuso3813@gmail.com`
+* **Telegram**: `@SeattleWLF`
 
-Do not create public GitHub issues for security vulnerabilities until the issue has been addressed or a responsible disclosure process is agreed.
+### Report Details
+Please include:
+1. Description and potential impact of the vulnerability
+2. Affected files, endpoints, or handlers
+3. Step-by-step Proof of Concept (PoC) to reproduce
+4. Suggested remediation or patch (if available)
 
-## Disclosure Expectations
+### Disclosure Timeline
+* **Acknowledgement**: Within 24–48 hours
+* **Assessment & Fix Plan**: Within 7 business days
+* **Patch Release**: Prior to public disclosure
 
-We aim to:
-- acknowledge valid reports promptly;
-- assess severity and impact;
-- provide a fix or mitigation plan;
-- keep the reporter informed during the remediation process.
+---
 
-## Security Checklist Before Deployment
+## Pre-Deployment Security Checklist
 
-Before running the bot in a production environment, verify:
+Before deploying the bot to production, ensure all checks pass:
 
-- [ ] `.env` is excluded from version control
-- [ ] API token is valid and not exposed in code
-- [ ] database credentials are separate from local development values
-- [ ] admin checks are enforced on all admin actions
-- [ ] callback data is validated
-- [ ] no direct SQL injection vectors exist
-- [ ] error logs do not expose secrets
-- [ ] bot is running with least-privilege permissions
-- [ ] backups and database access are protected
-
-## Final Note
-
-This project is a support bot and therefore processes potentially sensitive user data. Security should be treated as a requirement, not an optional layer.
+- [ ] `.env` is omitted from Git history and present in `.gitignore`.
+- [ ] Database user has restricted privileges (no `SUPERUSER` or `DROP TABLE` rights).
+- [ ] Prepared statements (`asyncpg`) are used for all database interactions.
+- [ ] Admin validation middleware/guards are applied to all sensitive handlers.
+- [ ] Callback query payloads are strictly validated and type-checked.
+- [ ] Webhook `secret_token` validation is active (if running via Webhook).
+- [ ] Rate-limiting (throttling middleware) is active on user inputs.
+- [ ] Logs are verified to contain no exposed tokens or database passwords.
