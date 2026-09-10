@@ -2,7 +2,7 @@ import asyncio
 import os
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, BotCommand
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -15,6 +15,7 @@ load_dotenv()
 
 bot = Bot(token=os.getenv('API_TOKEN'))
 dp = Dispatcher()
+db_pool = None
 
 class ReportStates(StatesGroup):
     waiting_for_question = State()
@@ -36,7 +37,7 @@ async def add_group_to_broadcast(message: Message):
         await message.answer("⚠️ Вы не находитесь в группе. Команда /add_group доступна только внутри группы.")
         return
 
-    pool = dp['db_pool']
+    pool = db_pool
     if not await services.is_admin(pool, message.from_user.id):
         await message.answer("⚠️ Только администратор бота может подключать эту группу к рассылке.")
         return
@@ -151,7 +152,7 @@ async def courses_language(callback: CallbackQuery):
 Давомнокӣ: 1 моҳ | Дарсҳо: 6 рӯз дар як ҳафта | Вақт: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00
 
 🔗 Барои сабти ном ба линки дар шапкаи профил гузаред.
-📩 Саволҳо доред? Ба мо нависед, мо бо хушнудӣ ба шумо кумак мекунем!"""
+📩 Саволҳо доред? /report нависед диҳед ва мо бо омодагӣ ба шумо дар саволи шумо кӯмак хоҳем кард."""
     elif lang == "ru":
         text = """🚀 Обучение IT и Современным Технологиям!
 
@@ -225,7 +226,7 @@ async def courses_language(callback: CallbackQuery):
 Длительность: 1 месяц | Занятия: 6 дней в неделю | Время: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00
 
 🔗 Для регистрации переходите по ссылке в шапке профиля!
-📩 Есть вопросы? Напишите нам, и мы с радостью проконсультируем вас!"""
+📩 Есть вопросы? Напишите /report и ваш вопрос будет рады помочь"""
     else:
         text = """🚀 Master IT & Modern Technologies!
 
@@ -299,7 +300,7 @@ Duration: 4 months | Schedule: 6 days per week | Time: 16:00 – 18:00 | 18:00 �
 Duration: 1 month | Schedule: 6 days per week | Time: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00
 
 🔗 Click the link in our bio to register!
-📩 Have questions? Message us anytime for a free consultation!"""
+📩 Have questions? Message /report and we will be happy to help you with your question."""
 
     await callback.message.edit_text(text, reply_markup=buttons.get_courses_back_keyboard())
     await callback.answer()
@@ -310,7 +311,7 @@ async def cmd_start(message: Message):
     if is_group_chat(message.chat):
         return
 
-    pool = dp['db_pool']
+    pool = db_pool
     await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
 
     is_admin = await services.is_admin(pool, message.from_user.id)
@@ -344,7 +345,7 @@ async def cmd_start(message: Message):
 
 @dp.callback_query(F.data == "admin_open_tickets")
 async def admin_open_tickets(callback: CallbackQuery):
-    pool = dp['db_pool']
+    pool = db_pool
     admin_id = callback.from_user.id
 
     if not await services.is_admin(pool, admin_id):
@@ -374,7 +375,7 @@ async def admin_open_tickets(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
-    pool = dp['db_pool']
+    pool = db_pool
     admin_id = callback.from_user.id
 
     if not await services.is_admin(pool, admin_id):
@@ -395,7 +396,7 @@ async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(BroadcastStates.waiting_for_broadcast, F.text | F.photo)
 async def process_broadcast_message(message: Message, state: FSMContext):
-    pool = dp['db_pool']
+    pool = db_pool
     if not await services.is_admin(pool, message.from_user.id):
         await message.answer("⚠️ У вас нет прав на рассылку.")
         return
@@ -443,7 +444,7 @@ async def process_broadcast_message(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("ticket_select:"))
 async def ticket_select(callback: CallbackQuery):
-    pool = dp['db_pool']
+    pool = db_pool
     ticket_id = int(callback.data.split(':')[1])
 
     if not await services.is_admin(pool, callback.from_user.id):
@@ -473,7 +474,7 @@ async def cmd_help(message: Message):
     await message.answer("📚 *Инструкция по использованию бота SoftClub Support*\n\n"
                          "Этот бот — прямая связь с администрацией учебного центра.\n\n"
                          "👉 Чтобы отправить вопрос, отзыв или жалобу, нажмите /report.\n"
-                         "👉 Чтобы перезапустить бота, нажмите /start."
+                         "👉 Чтобы перезапустить бота, нажмите /start.\n"
                          "👉 Чтобы посмотреть информацию про курсы /courses",parse_mode='Markdown')
 
 @dp.message(Command("report"))
@@ -481,7 +482,7 @@ async def cmd_report(message: Message, state: FSMContext):
     if is_group_chat(message.chat):
         return
 
-    pool = dp['db_pool']
+    pool = db_pool
     await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
     await message.answer("📝 Пожалуйста, напишите ваш вопрос или жалобу в одном текстовом сообщении 👇")
     await state.set_state(ReportStates.waiting_for_question)
@@ -492,7 +493,7 @@ async def process_question(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    pool = dp['db_pool']
+    pool = db_pool
     question_text = message.text
     user_id = message.from_user.id
     user_name = message.from_user.full_name
@@ -538,7 +539,7 @@ async def process_skip_callback(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("reply_tk:"))
 async def process_reply_callback(callback: CallbackQuery, state: FSMContext):
-    pool = dp['db_pool']
+    pool = db_pool
     ticket_id = int(callback.data.split(':')[1])
     admin_id = callback.from_user.id
     
@@ -559,7 +560,7 @@ async def process_reply_callback(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(AdminStates.waiting_for_answer, F.text)
 async def process_admin_answer(message: Message, state: FSMContext):
-    pool = dp['db_pool']
+    pool = db_pool
     answer_text = message.text
     admin_id = message.from_user.id
     admin_name = message.from_user.full_name
@@ -599,18 +600,10 @@ async def process_admin_answer(message: Message, state: FSMContext):
         await message.answer("⚠️ Не удалось доставить ответ пользователю.")
 
 async def main():
+    global db_pool
     pool = await sql.connect()
-    dp['db_pool'] = pool
+    db_pool = pool
     await sql.create_tables(pool)
-    
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Перезапустить бота"),
-        BotCommand(command="help", description="Инструкция"),
-        BotCommand(command="report", description="Отправить обращение"),
-        BotCommand(command="courses", description="Узнать о курсах"),
-        BotCommand(command="add_group", description="Подключить группу к рассылке")
-    ])
-
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
