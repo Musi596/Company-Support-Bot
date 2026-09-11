@@ -14,5 +14,6 @@ class CourseStates(StatesGroup):
     waiting_for_description = State()
     waiting_for_photo = State()
 
+
 class BroadcastStates(StatesGroup):
     waiting_for_broadcast = State()

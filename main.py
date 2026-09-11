@@ -5,11 +5,9 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
-from fsm import *
+from bot.fsm import *
 
-import sql
-import services
-import buttons
+from bot import sql, services, buttons, fsm
 
 
 load_dotenv()
