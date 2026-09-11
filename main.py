@@ -672,6 +672,20 @@ async def ticket_select(callback: CallbackQuery):
         f"🕒 *Дата:* {ticket['created_at'].strftime('%d.%m.%Y %H:%M')}\n\n"
         f"📝 *Текст:*\n_{ticket['question']}_"
     )
+
+    if ticket.get('photo'):
+        try:
+            await callback.message.answer_photo(
+                photo=ticket['photo'],
+                caption=message_text,
+                parse_mode="Markdown",
+                reply_markup=buttons.get_ticket_detail_keyboard(ticket_id)
+            )
+            await safe_callback_answer(callback)
+            return
+        except Exception:
+            pass
+
     await safe_edit_message(callback, message_text, parse_mode="Markdown", reply_markup=buttons.get_ticket_detail_keyboard(ticket_id))
     await safe_callback_answer(callback)
 
@@ -697,19 +711,23 @@ async def cmd_report(message: Message, state: FSMContext):
     await message.answer("📝 Пожалуйста, напишите ваш вопрос или жалобу в одном текстовом сообщении 👇")
     await state.set_state(ReportStates.waiting_for_question)
 
-@dp.message(ReportStates.waiting_for_question, F.text)
+@dp.message(ReportStates.waiting_for_question, F.text | F.photo)
 async def process_question(message: Message, state: FSMContext):
     if is_group_chat(message.chat):
         await state.clear()
         return
 
     pool = db_pool
-    question_text = message.text
+    question_text = message.caption if message.photo else message.text
+    if not question_text:
+        question_text = "Пользователь отправил фото без текста."
+
     user_id = message.from_user.id
     user_name = message.from_user.full_name
+    photo_file_id = message.photo[-1].file_id if message.photo else None
 
     await state.clear()
-    ticket_id = await services.create_ticket(pool, user_id, user_name, question_text)
+    ticket_id = await services.create_ticket(pool, user_id, user_name, question_text, photo_file_id)
 
     await message.answer(
         f"✅ Спасибо! Ваш вопрос принят (ID обращения: #{ticket_id}).\n"
@@ -728,12 +746,21 @@ async def process_question(message: Message, state: FSMContext):
 
     for admin_id in admins:
         try:
-            await bot.send_message(
-                admin_id,
-                admin_message_text,
-                parse_mode="Markdown",
-                reply_markup=buttons.get_admin_action_keyboard(ticket_id)
-            )
+            if photo_file_id:
+                await bot.send_photo(
+                    admin_id,
+                    photo=photo_file_id,
+                    caption=admin_message_text,
+                    parse_mode="Markdown",
+                    reply_markup=buttons.get_admin_action_keyboard(ticket_id)
+                )
+            else:
+                await bot.send_message(
+                    admin_id,
+                    admin_message_text,
+                    parse_mode="Markdown",
+                    reply_markup=buttons.get_admin_action_keyboard(ticket_id)
+                )
         except Exception as e:
             print(f"Ошибка отправки админу {admin_id}: {e}")
 

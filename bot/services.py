@@ -69,13 +69,13 @@ async def get_open_tickets(pool: asyncpg.Pool):
         """)
         return rows
 
-async def create_ticket(pool: asyncpg.Pool, user_id: int, user_name: str, question_text: str):
+async def create_ticket(pool: asyncpg.Pool, user_id: int, user_name: str, question_text: str, photo_file_id: str | None = None):
     async with pool.acquire() as conn:
         ticket_id = await conn.fetchval("""
-            INSERT INTO tickets (user_id, user_name, question)
-            VALUES ($1, $2, $3)
+            INSERT INTO tickets (user_id, user_name, question, photo)
+            VALUES ($1, $2, $3, $4)
             RETURNING ticket_id;
-        """, user_id, user_name, question_text)
+        """, user_id, user_name, question_text, photo_file_id)
         return ticket_id
 
 async def get_ticket_by_id(pool: asyncpg.Pool, ticket_id: int):

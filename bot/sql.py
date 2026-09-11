@@ -30,6 +30,7 @@ async def create_tables(pool):
                     user_id BIGINT NOT NULL,
                     user_name VARCHAR(255) NOT NULL,
                     question TEXT NOT NULL,
+                    photo TEXT DEFAULT NULL,
                     status VARCHAR(20) NOT NULL DEFAULT 'open',
                     answer TEXT DEFAULT NULL,
                     admin_id BIGINT DEFAULT NULL,
