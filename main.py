@@ -1,58 +1,24 @@
 import asyncio
 import os
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart, Command
-from aiogram.fsm.context import FSMContext
-from bot.fsm import *
-
-from bot import sql, services, buttons, fsm
-
 
 load_dotenv()
 
-bot = Bot(token=os.getenv('API_TOKEN'))
-dp = Dispatcher()
-db_pool = None
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command, CommandStart
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
 
+from bot import services, buttons, sql
+from bot.fsm import ReportStates, AdminStates, CourseStates, BroadcastStates
 
+API_TOKEN = os.getenv('API_TOKEN')
+if not API_TOKEN:
+    raise RuntimeError('API_TOKEN is not set in environment')
 
-COURSE_DETAILS = {
-    "tj": {
-        "ai": "🚀 Курси AI Fundamentals\n\nТанҳо дар 1 моҳ шумо метавонед:\n- Prompt Engineering-ро омӯзед\n- ChatGPT, Claude ва Gemini-ро коргузорӣ кунед\n- Автоматизатсия бо Zapier, Make, n8n\n- AI-ро барои матн, тасвир ва видео истифода баред\n- AI Agent-и шахсии худро созед\n\nДавомнокӣ: 1 моҳ\nДарсҳо: 3 рӯз дар як ҳафта\nВақт: 18:00 – 20:00",
-        "programming": "💻 Курси Програ ммирование с 0\n\nБарои оғозёбандагон ва донишҷӯёни нав: \n- C++\n- HTML/CSS & GitHub\n- Истифодаи AI барои омӯзиш\n\nДавомнокӣ: 2 моҳ\nДарсҳо: 6 рӯз дар як ҳафта\nВақт: 16:00 – 18:00 | 18:00 – 20:00",
-        "python": "🐍 Python Course\n\n- Python & PostgreSQL\n- Telegram Bot & FastAPI\n- Django REST Framework\n- Clean Architecture\n- AI Tools: ChatGPT, Claude, Gemini, Stitch AI, MCP Servers\n\nДавомнокӣ: 5 моҳ\nДарсҳо: 6 рӯз дар як ҳафта\nВақт: 16:00 – 18:00 | 18:00 – 20:00",
-        "frontend": "🖥️ Frontend Course\n\n- JavaScript & React\n- TypeScript & Next.js\n- Clean Architecture\n- AI Tools\n\nДавомнокӣ: 5 моҳ\nДарсҳо: 6 рӯз дар як ҳафта\nВақт: 16:00 – 18:00 | 18:00 – 20:00",
-        "golang": "⚙️ Golang Course\n\n- Golang & PostgreSQL\n- Clean Architecture\n- Microservices (gRPC) & Redis\n- Deployment and DevOps foundation\n- RabbitMQ & AI Tools\n\nДавомнокӣ: 5 моҳ\nДарсҳо: 6 рӯз дар як ҳафта\nВақт: 18:00 – 20:00",
-        "csharp": "🔷 C# Course\n\n- C# & PostgreSQL\n- .NET Framework\n- Clean Architecture\n- AI Tools\n\nДавомнокӣ: 5 моҳ\nДарсҳо: 6 рӯз дар як ҳафта\nВақт: 16:00 – 18:00 | 18:00 – 20:00",
-        "mobile": "📱 Mobile Development\n\n- Dart & Flutter\n- State Management\n- Clean Architecture\n- AI Tools\n\nДавомнокӣ: 4 моҳ\nДарсҳо: 6 рӯз дар як ҳафта\nВақт: 16:00 – 18:00 | 18:00 – 20:00",
-        "design": "🎨 Graphic Design & UX/UI\n\n- Photoshop, CorelDRAW, Illustrator\n- Blender, After Effects\n- Figma\n- Canva ва AI tools барои дизайнерҳо\n\nДавомнокӣ: 4 моҳ\nДарсҳо: 6 рӯз дар як ҳафта\nВақт: 16:00 – 18:00 | 18:00 – 20:00",
-        "office": "🧠 Компьютерная грамотность для сотрудников\n\n- Word, Excel, PowerPoint\n- Google Docs ва Canva\n- Keyboard Skills\n- AI дар фаъолияти корӣ\n- Автоматизатсияи офисӣ\n\nДавомнокӣ: 1 моҳ\nДарсҳо: 6 рӯз дар як ҳафта\nВақт: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00",
-    },
-    "ru": {
-        "ai": "🚀 Основы AI\n\nЗа 1 месяц вы научитесь:\n- Prompt Engineering\n- Работать с ChatGPT, Claude и Gemini\n- Автоматизировать процессы через Zapier, Make, n8n\n- Использовать AI для текста, изображений и видео\n- Создавать собственного AI-агента\n\nДлительность: 1 месяц\nЗанятия: 3 дня в неделю\nВремя: 18:00 – 20:00",
-        "programming": "💻 Программирование с 0\n\nПодходит новичкам и тем, кто хочет начать с нуля:\n- C++\n- HTML/CSS & GitHub\n- Использование AI для обучения\n\nДлительность: 2 месяца\nЗанятия: 6 дней в неделю\nВремя: 16:00 – 18:00 | 18:00 – 20:00",
-        "python": "🐍 Python Course\n\n- Python & PostgreSQL\n- Telegram Bot & FastAPI\n- Django REST Framework\n- Clean Architecture\n- AI Tools: ChatGPT, Claude, Gemini, Stitch AI, MCP Servers\n\nДлительность: 5 месяцев\nЗанятия: 6 дней в неделю\nВремя: 16:00 – 18:00 | 18:00 – 20:00",
-        "frontend": "🖥️ Frontend Course\n\n- JavaScript & React\n- TypeScript & Next.js\n- Clean Architecture\n- AI Tools\n\nДлительность: 5 месяцев\nЗанятия: 6 дней в неделю\nВремя: 16:00 – 18:00 | 18:00 – 20:00",
-        "golang": "⚙️ Golang Course\n\n- Golang & PostgreSQL\n- Clean Architecture\n- Microservices (gRPC) & Redis\n- Deployment and DevOps\n- RabbitMQ & AI Tools\n\nДлительность: 5 месяцев\nЗанятия: 6 дней в неделю\nВремя: 18:00 – 20:00",
-        "csharp": "🔷 C# Course\n\n- C# & PostgreSQL\n- .NET Framework\n- Clean Architecture\n- AI Tools\n\nДлительность: 5 месяцев\nЗанятия: 6 дней в неделю\nВремя: 16:00 – 18:00 | 18:00 – 20:00",
-        "mobile": "📱 Mobile Development\n\n- Dart & Flutter\n- State Management\n- Clean Architecture\n- AI Tools\n\nДлительность: 4 месяца\nЗанятия: 6 дней в неделю\nВремя: 16:00 – 18:00 | 18:00 – 20:00",
-        "design": "🎨 Graphic Design & UX/UI\n\n- Photoshop, CorelDRAW, Illustrator\n- Blender, After Effects\n- Figma\n- Canva и AI инструменты для дизайнеров\n\nДлительность: 4 месяца\nЗанятия: 6 дней в неделю\nВремя: 16:00 – 18:00 | 18:00 – 20:00",
-        "office": "🧠 Компьютерная грамотность для сотрудников\n\n- Word, Excel, PowerPoint\n- Google Docs & Canva\n- Навыки работы с клавиатурой\n- AI в ежедневной работе\n- Автоматизация офисных задач\n\nДлительность: 1 месяц\nЗанятия: 6 дней в неделю\nВремя: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00",
-    },
-    "en": {
-        "ai": "🚀 AI Fundamentals\n\nIn just 1 month you will learn:\n- Prompt Engineering\n- Working with ChatGPT, Claude and Gemini\n- Automating workflows with Zapier, Make, n8n\n- Using AI for text, image, and video\n- Building your own AI agent\n\nDuration: 1 month\nSchedule: 3 days per week\nTime: 18:00 – 20:00",
-        "programming": "💻 Programming from Scratch\n\nPerfect for beginners:\n- C++\n- HTML/CSS & GitHub\n- Using AI to accelerate learning\n\nDuration: 2 months\nSchedule: 6 days per week\nTime: 16:00 – 18:00 | 18:00 – 20:00",
-        "python": "🐍 Python Course\n\n- Python & PostgreSQL\n- Telegram Bot & FastAPI\n- Django REST Framework\n- Clean Architecture\n- AI Tools: ChatGPT, Claude, Gemini, Stitch AI, MCP Servers\n\nDuration: 5 months\nSchedule: 6 days per week\nTime: 16:00 – 18:00 | 18:00 – 20:00",
-        "frontend": "🖥️ Frontend Course\n\n- JavaScript & React\n- TypeScript & Next.js\n- Clean Architecture\n- AI Tools\n\nDuration: 5 months\nSchedule: 6 days per week\nTime: 16:00 – 18:00 | 18:00 – 20:00",
-        "golang": "⚙️ Golang Course\n\n- Golang & PostgreSQL\n- Clean Architecture\n- Microservices (gRPC) & Redis\n- Deployment and DevOps\n- RabbitMQ & AI Tools\n\nDuration: 5 months\nSchedule: 6 days per week\nTime: 18:00 – 20:00",
-        "csharp": "🔷 C# Course\n\n- C# & PostgreSQL\n- .NET Framework\n- Clean Architecture\n- AI Tools\n\nDuration: 5 months\nSchedule: 6 days per week\nTime: 16:00 – 18:00 | 18:00 – 20:00",
-        "mobile": "📱 Mobile Development\n\n- Dart & Flutter\n- State Management\n- Clean Architecture\n- AI Tools\n\nDuration: 4 months\nSchedule: 6 days per week\nTime: 16:00 – 18:00 | 18:00 – 20:00",
-        "design": "🎨 Graphic Design & UX/UI\n\n- Photoshop, CorelDRAW, Illustrator\n- Blender & After Effects\n- Figma\n- Canva and AI tools for designers\n\nDuration: 4 months\nSchedule: 6 days per week\nTime: 16:00 – 18:00 | 18:00 – 20:00",
-        "office": "🧠 Computer Basics for Employees\n\n- Word, Excel, PowerPoint\n- Google Docs & Canva\n- Keyboard mastery\n- AI in daily work\n- Office workflow automation\n\nDuration: 1 month\nSchedule: 6 days per week\nTime: 14:00 – 16:00 | 16:00 – 18:00 | 18:00 – 20:00",
-    }
-}
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
 
 
 def is_group_chat(chat) -> bool:
@@ -117,10 +83,31 @@ async def courses_language(callback: CallbackQuery):
         "en": "Choose a course:",
     }
 
-    await callback.message.edit_text(
-        titles.get(lang, "Выберите курс:"),
-        reply_markup=buttons.get_courses_course_keyboard(lang)
-    )
+    pool = db_pool
+    courses = await services.get_courses_by_lang(pool, lang)
+
+    if not courses:
+        await callback.message.edit_text(
+            "Пока нет курсов для выбранного языка.",
+            reply_markup=buttons.get_courses_back_keyboard()
+        )
+        await callback.answer()
+        return
+
+    rows = []
+    current = []
+    for c in courses:
+        current.append(InlineKeyboardButton(text=c['title'], callback_data=f"courses_course:{lang}:{c['slug']}"))
+        if len(current) == 2:
+            rows.append(current)
+            current = []
+    if current:
+        rows.append(current)
+
+    rows.append([InlineKeyboardButton(text="🔙 Назад к выбору языка", callback_data="courses_menu")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    await callback.message.edit_text(titles.get(lang, "Выберите курс:"), reply_markup=kb)
     await callback.answer()
 
 
@@ -133,17 +120,37 @@ async def courses_list(callback: CallbackQuery):
         "en": "Choose a course:",
     }
 
-    await callback.message.edit_text(
-        titles.get(lang, "Выберите курс:"),
-        reply_markup=buttons.get_courses_course_keyboard(lang)
-    )
+    pool = db_pool
+    courses = await services.get_courses_by_lang(pool, lang)
+
+    if not courses:
+        await callback.message.edit_text(
+            "Пока нет курсов для выбранного языка.",
+            reply_markup=buttons.get_courses_back_keyboard()
+        )
+        await callback.answer()
+        return
+
+    rows = []
+    current = []
+    for c in courses:
+        current.append(InlineKeyboardButton(text=c['title'], callback_data=f"courses_course:{lang}:{c['slug']}"))
+        if len(current) == 2:
+            rows.append(current)
+            current = []
+    if current:
+        rows.append(current)
+
+    rows.append([InlineKeyboardButton(text="🔙 Назад к выбору языка", callback_data="courses_menu")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
+
+    await callback.message.edit_text(titles.get(lang, "Выберите курс:"), reply_markup=kb)
     await callback.answer()
 
 
 @dp.callback_query(F.data.startswith("courses_course:"))
 async def courses_detail(callback: CallbackQuery):
     _, lang, course_id = callback.data.split(":", 2)
-    # try to load from DB first
     pool = db_pool
     course = await services.get_course_by_slug(pool, course_id, lang)
     if course:
@@ -159,19 +166,7 @@ async def courses_detail(callback: CallbackQuery):
         await callback.message.edit_text(text, reply_markup=kb)
         await callback.answer()
         return
-
-    # fallback to static data
-    text = COURSE_DETAILS.get(lang, {}).get(course_id)
-
-    if text is None:
-        await callback.answer("Курс не найден.", show_alert=True)
-        return
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=buttons.get_courses_detail_keyboard(lang)
-    )
-    await callback.answer()
+    await callback.answer("Курс не найден.", show_alert=True)
 
 
 @dp.message(CommandStart())
@@ -251,25 +246,24 @@ async def admin_manage_courses(callback: CallbackQuery):
         return
 
     courses = await services.get_courses_by_lang(pool, 'ru')
-    # also include other langs
     courses += await services.get_courses_by_lang(pool, 'en')
     courses += await services.get_courses_by_lang(pool, 'tj')
 
     keyboard_rows = []
     keyboard_rows.append([
-        buttons.InlineKeyboardButton(text="➕ Добавить курс", callback_data="admin_add_course")
+        InlineKeyboardButton(text="➕ Добавить курс", callback_data="admin_add_course")
     ])
 
     for c in courses:
         keyboard_rows.append([
-            buttons.InlineKeyboardButton(text=f"{c['lang']} • {c['slug']} — {c['title']}", callback_data=f"admin_course:{c['course_id']}")
+            InlineKeyboardButton(text=f"{c['lang']} • {c['slug']} — {c['title']}", callback_data=f"admin_course:{c['course_id']}")
         ])
 
     keyboard_rows.append([
-        buttons.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_open_tickets")
+        InlineKeyboardButton(text="🔙 Назад", callback_data="admin_open_tickets")
     ])
 
-    kb = buttons.InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
+    kb = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
     await callback.message.edit_text("🛠 Управление курсами:", reply_markup=kb)
     await callback.answer()
 
@@ -308,6 +302,19 @@ async def course_waiting_slug(message: Message, state: FSMContext):
 @dp.message(CourseStates.waiting_for_title, F.text)
 async def course_waiting_title(message: Message, state: FSMContext):
     title = message.text.strip()
+    data = await state.get_data()
+    editing_course_id = data.get('editing_course_id')
+
+    if editing_course_id:
+        pool = db_pool
+        try:
+            await services.update_course(pool, editing_course_id, title=title)
+            await message.answer("✅ Название курса обновлено.")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при обновлении курса: {e}")
+        await state.clear()
+        return
+
     await state.update_data(title=title)
     await message.answer("Введите полное описание курса (текст). Для пропуска отправьте /skip")
     await state.set_state(CourseStates.waiting_for_description)
@@ -329,6 +336,7 @@ async def course_waiting_photo(message: Message, state: FSMContext):
     slug = data.get('slug')
     title = data.get('title')
     description = data.get('description')
+    editing_course_id = data.get('editing_course_id')
 
     photo_file_id = None
     if message.photo:
@@ -337,6 +345,18 @@ async def course_waiting_photo(message: Message, state: FSMContext):
         photo_file_id = None
     else:
         await message.answer("Отправьте фото или /skip")
+        return
+
+    if editing_course_id:
+        try:
+            if photo_file_id:
+                await services.set_course_photo(pool, editing_course_id, photo_file_id)
+                await message.answer("✅ Фото курса обновлено.")
+            else:
+                await message.answer("❌ Фото не было отправлено.")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при обновлении фото: {e}")
+        await state.clear()
         return
 
     try:
@@ -366,13 +386,12 @@ async def admin_course_view(callback: CallbackQuery):
 
     text = f"🎓 {course['title']}\n\n{course['description'] or ''}\n\n(lang: {course['lang']}, slug: {course['slug']})"
 
-    kb = buttons.InlineKeyboardMarkup(inline_keyboard=[
-        [buttons.InlineKeyboardButton(text="✏️ Редактировать информацию", callback_data=f"admin_course_action:edit_info:{course_id}"), buttons.InlineKeyboardButton(text="🖼️ Изменить фото", callback_data=f"admin_course_action:change_photo:{course_id}")],
-        [buttons.InlineKeyboardButton(text="🗑 Удалить фото", callback_data=f"admin_course_action:remove_photo:{course_id}"), buttons.InlineKeyboardButton(text="❌ Удалить курс", callback_data=f"admin_course_action:delete:{course_id}")],
-        [buttons.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_manage_courses")]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Редактировать информацию", callback_data=f"admin_course_action:edit_info:{course_id}"), InlineKeyboardButton(text="🖼️ Изменить фото", callback_data=f"admin_course_action:change_photo:{course_id}")],
+        [InlineKeyboardButton(text="🗑 Удалить фото", callback_data=f"admin_course_action:remove_photo:{course_id}"), InlineKeyboardButton(text="❌ Удалить курс", callback_data=f"admin_course_action:delete:{course_id}")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_manage_courses")]
     ])
 
-    # send photo if exists
     if course['photo']:
         try:
             await callback.message.answer_photo(photo=course['photo'], caption=text, reply_markup=kb)

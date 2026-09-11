@@ -48,61 +48,9 @@ def get_courses_language_keyboard() -> InlineKeyboardMarkup:
     ])
 
 def get_courses_course_keyboard(lang: str) -> InlineKeyboardMarkup:
-    course_labels = {
-        "tj": {
-            "ai": "1️⃣ AI Fundamentals",
-            "programming": "2️⃣ Программирование с 0",
-            "python": "3️⃣ Python",
-            "frontend": "4️⃣ Frontend",
-            "golang": "5️⃣ Golang",
-            "csharp": "6️⃣ C#",
-            "mobile": "7️⃣ Mobile",
-            "design": "8️⃣ Design & UX/UI",
-            "office": "9️⃣ Компьютерная грамотность"
-        },
-        "ru": {
-            "ai":"1️⃣ Основы AI",
-            "programming": "2️⃣ Программирование с 0",
-            "python": "3️⃣ Python",
-            "frontend": "4️⃣ Frontend",
-            "golang": "5️⃣ Golang",
-            "csharp": "6️⃣ C#",
-            "mobile": "7️⃣ Mobile",
-            "design": "8️⃣ Design & UX/UI",
-            "office": "9️⃣ Компьютерная грамотность"
-        },
-        "en": {
-            "ai": "1️⃣ AI Fundamentals",
-            "programming": "2️⃣ Programming from Scratch",
-            "python": "3️⃣ Python",
-            "frontend": "4️⃣ Frontend",
-            "golang": "5️⃣ Golang",
-            "csharp": "6️⃣ C#",
-            "mobile": "7️⃣ Mobile",
-            "design": "8️⃣ Design & UX/UI",
-            "office": "9️⃣ Computer Basics"
-        }
-    }
-
-    rows = []
-    current_row = []
-    for course_id, label in course_labels.get(lang, {}).items():
-        current_row.append(
-            InlineKeyboardButton(
-                text=label,
-                callback_data=f"courses_course:{lang}:{course_id}"
-            )
-        )
-        if len(current_row) == 2:
-            rows.append(current_row)
-            current_row = []
-    if current_row:
-        rows.append(current_row)
-
-    rows.append([
+    return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🔙 Назад к выбору языка", callback_data="courses_menu")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    ]])
 
 def get_courses_detail_keyboard(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
