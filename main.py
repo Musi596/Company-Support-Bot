@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
@@ -12,6 +13,31 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot import services, buttons, sql
 from bot.fsm import ReportStates, AdminStates, CourseStates, BroadcastStates
+
+
+async def safe_callback_answer(callback: CallbackQuery, text: str | None = None, *, show_alert: bool = False):
+    try:
+        await callback.answer(text, show_alert=show_alert)
+    except TelegramBadRequest:
+        pass
+
+
+async def safe_edit_message(callback: CallbackQuery, text: str, *, parse_mode=None, reply_markup=None):
+    if callback.message is None:
+        return
+    try:
+        if callback.message.content_type == 'photo':
+            try:
+                await callback.message.edit_caption(caption=text, parse_mode=parse_mode, reply_markup=reply_markup)
+                return
+            except TelegramBadRequest:
+                pass
+        await callback.message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except TelegramBadRequest:
+        try:
+            await callback.message.answer(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        except TelegramBadRequest:
+            pass
 
 API_TOKEN = os.getenv('API_TOKEN')
 if not API_TOKEN:
@@ -212,16 +238,17 @@ async def admin_open_tickets(callback: CallbackQuery):
     admin_id = callback.from_user.id
 
     if not await services.is_admin(pool, admin_id):
-        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     tickets = await services.get_open_tickets(pool)
     if not tickets:
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             "📭 Нет новых вопросов и жалоб. Все обращения уже закрыты.",
-            reply_markup=buttons.get_admin_main_keyboard()
+            reply_markup=buttons.get_admin_main_keyboard(),
         )
-        await callback.answer("Нет новых обращений.")
+        await safe_callback_answer(callback, "Нет новых обращений.")
         return
 
     ticket_lines = []
@@ -232,8 +259,8 @@ async def admin_open_tickets(callback: CallbackQuery):
         ticket_lines.append(f"#{ticket['ticket_id']} • {ticket['user_name']} • {preview}")
 
     text = "📋 *Неотвеченные вопросы и жалобы:*\n\n" + "\n".join(ticket_lines)
-    await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=buttons.get_admin_ticket_list_keyboard(tickets))
-    await callback.answer()
+    await safe_edit_message(callback, text, parse_mode="Markdown", reply_markup=buttons.get_admin_ticket_list_keyboard(tickets))
+    await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data == "admin_manage_courses")
@@ -242,7 +269,7 @@ async def admin_manage_courses(callback: CallbackQuery):
     admin_id = callback.from_user.id
 
     if not await services.is_admin(pool, admin_id):
-        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     courses = await services.get_courses_by_lang(pool, 'ru')
@@ -264,20 +291,55 @@ async def admin_manage_courses(callback: CallbackQuery):
     ])
 
     kb = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-    await callback.message.edit_text("🛠 Управление курсами:", reply_markup=kb)
-    await callback.answer()
+    await safe_edit_message(callback, "🛠 Управление курсами:", reply_markup=kb)
+    await safe_callback_answer(callback)
+
+
+@dp.callback_query(F.data == "admin_view_groups")
+async def admin_view_groups(callback: CallbackQuery):
+    pool = db_pool
+    admin_id = callback.from_user.id
+
+    if not await services.is_admin(pool, admin_id):
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
+        return
+
+    chats = await services.get_registered_chats(pool)
+    keyboard = buttons.get_group_list_keyboard(chats)
+    await safe_edit_message(callback, "👥 Подключённые группы:\n\nВыберите группу для удаления из списка рассылки.", reply_markup=keyboard)
+    await safe_callback_answer(callback)
+
+
+@dp.callback_query(F.data.startswith("admin_group_delete:"))
+async def admin_group_delete(callback: CallbackQuery):
+    pool = db_pool
+    admin_id = callback.from_user.id
+
+    if not await services.is_admin(pool, admin_id):
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
+        return
+
+    chat_id = int(callback.data.split(":", 1)[1])
+    try:
+        await bot.leave_chat(chat_id)
+    except Exception:
+        pass
+
+    await services.delete_chat(pool, chat_id)
+    await admin_view_groups(callback)
+    await safe_callback_answer(callback, "Группа удалена и бот вышел из неё.")
 
 
 @dp.callback_query(F.data == "admin_add_course")
 async def admin_add_course_start(callback: CallbackQuery, state: FSMContext):
     pool = db_pool
     if not await services.is_admin(pool, callback.from_user.id):
-        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     await callback.message.answer("📥 Введите язык курса (ru / tj / en):")
     await state.set_state(CourseStates.waiting_for_lang)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @dp.message(CourseStates.waiting_for_lang, F.text)
@@ -375,13 +437,13 @@ async def admin_course_view(callback: CallbackQuery):
     pool = db_pool
     admin_id = callback.from_user.id
     if not await services.is_admin(pool, admin_id):
-        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     course_id = int(callback.data.split(":", 1)[1])
     course = await services.get_course_by_id(pool, course_id)
     if not course:
-        await callback.answer("Курс не найден.", show_alert=True)
+        await safe_callback_answer(callback, "Курс не найден.", show_alert=True)
         return
 
     text = f"🎓 {course['title']}\n\n{course['description'] or ''}\n\n(lang: {course['lang']}, slug: {course['slug']})"
@@ -396,11 +458,11 @@ async def admin_course_view(callback: CallbackQuery):
         try:
             await callback.message.answer_photo(photo=course['photo'], caption=text, reply_markup=kb)
         except Exception:
-            await callback.message.edit_text(text, reply_markup=kb)
+            await safe_edit_message(callback, text, reply_markup=kb)
     else:
-        await callback.message.edit_text(text, reply_markup=kb)
+        await safe_edit_message(callback, text, reply_markup=kb)
 
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data.startswith("admin_course_action:"))
@@ -408,7 +470,7 @@ async def admin_course_action(callback: CallbackQuery, state: FSMContext):
     pool = db_pool
     admin_id = callback.from_user.id
     if not await services.is_admin(pool, admin_id):
-        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     _, action, course_id = callback.data.split(":", 2)
@@ -424,14 +486,20 @@ async def admin_course_action(callback: CallbackQuery, state: FSMContext):
         await state.set_state(CourseStates.waiting_for_photo)
     elif action == 'remove_photo':
         await services.remove_course_photo(pool, course_id)
-        await callback.answer("Фото удалено.")
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await safe_callback_answer(callback, "Фото удалено.")
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
     elif action == 'delete':
         await services.delete_course(pool, course_id)
-        await callback.answer("Курс удалён.")
-        await callback.message.edit_reply_markup(reply_markup=None)
+        await safe_callback_answer(callback, "Курс удалён.")
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except TelegramBadRequest:
+            pass
     else:
-        await callback.answer()
+        await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data == "admin_broadcast")
@@ -440,19 +508,95 @@ async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
     admin_id = callback.from_user.id
 
     if not await services.is_admin(pool, admin_id):
-        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
+    kb = buttons.get_broadcast_mode_keyboard()
+    await safe_edit_message(callback, "📣 Куда отправлять рассылку?", reply_markup=kb)
+    await state.update_data(broadcast_all=False, selected_chat_ids=[])
+    await safe_callback_answer(callback)
+
+
+@dp.callback_query(F.data.startswith("broadcast_target:"))
+async def broadcast_target(callback: CallbackQuery, state: FSMContext):
+    pool = db_pool
+    admin_id = callback.from_user.id
+    if not await services.is_admin(pool, admin_id):
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
+        return
+
+    target = callback.data.split(":", 1)[1]
+    if target == "all":
+        await state.set_state(BroadcastStates.waiting_for_broadcast)
+        await state.update_data(broadcast_all=True, selected_chat_ids=[])
+        await callback.message.answer(
+            "📣 Теперь отправьте текст или фото для рассылки по всем группам.\n\n"
+            "Для отмены напишите /cancel"
+        )
+        await safe_callback_answer(callback)
+        return
+
+    chats = await services.get_registered_chats(pool)
+    if not chats:
+        await safe_callback_answer(callback, "📭 Нет подключённых групп.", show_alert=True)
+        return
+
+    await state.set_state(BroadcastStates.waiting_for_broadcast)
+    await state.update_data(broadcast_all=False, selected_chat_ids=[])
+    await render_broadcast_selection(callback, state)
+
+
+async def render_broadcast_selection(callback: CallbackQuery, state: FSMContext):
+    pool = db_pool
+    data = await state.get_data()
+    selected_ids = set(int(x) for x in data.get('selected_chat_ids', []))
+    chats = await services.get_registered_chats(pool)
+
+    kb = buttons.get_broadcast_group_selection_keyboard(chats, selected_ids)
+    await safe_edit_message(callback, "📣 Выберите группы для рассылки:\n\n✅ — выбрана, ⬜ — не выбрана", reply_markup=kb)
+    await safe_callback_answer(callback)
+
+
+@dp.callback_query(F.data.startswith("broadcast_toggle:"))
+async def broadcast_toggle(callback: CallbackQuery, state: FSMContext):
+    pool = db_pool
+    admin_id = callback.from_user.id
+    if not await services.is_admin(pool, admin_id):
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
+        return
+
+    chat_id = int(callback.data.split(":", 1)[1])
+    data = await state.get_data()
+    selected = list(data.get('selected_chat_ids', []))
+    if chat_id in selected:
+        selected.remove(chat_id)
+    else:
+        selected.append(chat_id)
+
+    await state.update_data(selected_chat_ids=selected)
+    await render_broadcast_selection(callback, state)
+
+
+@dp.callback_query(F.data == "broadcast_send_selected")
+async def broadcast_send_selected(callback: CallbackQuery, state: FSMContext):
+    pool = db_pool
+    admin_id = callback.from_user.id
+    if not await services.is_admin(pool, admin_id):
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
+        return
+
+    selected = [int(x) for x in (await state.get_data()).get('selected_chat_ids', [])]
+    if not selected:
+        await safe_callback_answer(callback, "Выберите хотя бы одну группу.", show_alert=True)
+        return
+
+    await state.update_data(broadcast_all=False)
     await callback.message.answer(
-        "📣 Отправьте сообщение для рассылки по всем группам, где есть бот.\n\n"
-        "Можно отправить: \n"
-        "- только текст;\n"
-        "- только фото;\n"
-        "- фото с текстом в подписи.\n\n"
+        "📣 Теперь отправьте текст или фото для выбранных групп.\n\n"
         "Для отмены напишите /cancel"
     )
     await state.set_state(BroadcastStates.waiting_for_broadcast)
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @dp.message(BroadcastStates.waiting_for_broadcast, F.text | F.photo)
@@ -474,10 +618,15 @@ async def process_broadcast_message(message: Message, state: FSMContext):
         await message.answer("❌ Нечего отправлять. Пришлите текст или фото.")
         return
 
-    chats = await services.get_broadcast_chat_ids(pool)
+    state_data = await state.get_data()
+    if state_data.get('broadcast_all'):
+        chats = await services.get_broadcast_chat_ids(pool)
+    else:
+        chats = [int(x) for x in state_data.get('selected_chat_ids', [])]
+
     if not chats:
         await state.clear()
-        await message.answer("📭 В базе нет групп, куда можно отправить рассылку.")
+        await message.answer("📭 Нет групп для рассылки.")
         return
 
     sent_count = 0
@@ -509,12 +658,12 @@ async def ticket_select(callback: CallbackQuery):
     ticket_id = int(callback.data.split(':')[1])
 
     if not await services.is_admin(pool, callback.from_user.id):
-        await callback.answer("⚠️ У вас нет прав администратора.", show_alert=True)
+        await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     ticket = await services.get_ticket_by_id(pool, ticket_id)
     if not ticket:
-        await callback.answer("⚠️ Обращение не найдено.", show_alert=True)
+        await safe_callback_answer(callback, "⚠️ Обращение не найдено.", show_alert=True)
         return
 
     message_text = (
@@ -523,8 +672,8 @@ async def ticket_select(callback: CallbackQuery):
         f"🕒 *Дата:* {ticket['created_at'].strftime('%d.%m.%Y %H:%M')}\n\n"
         f"📝 *Текст:*\n_{ticket['question']}_"
     )
-    await callback.message.edit_text(message_text, parse_mode="Markdown", reply_markup=buttons.get_ticket_detail_keyboard(ticket_id))
-    await callback.answer()
+    await safe_edit_message(callback, message_text, parse_mode="Markdown", reply_markup=buttons.get_ticket_detail_keyboard(ticket_id))
+    await safe_callback_answer(callback)
 
 
 @dp.message(Command("help"))

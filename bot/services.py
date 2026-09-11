@@ -37,6 +37,20 @@ async def get_broadcast_chat_ids(pool: asyncpg.Pool):
         """)
         return [row['chat_id'] for row in rows]
 
+async def get_registered_chats(pool: asyncpg.Pool):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT chat_id, chat_type, title, created_at
+            FROM bot_chats
+            WHERE chat_type IN ('group', 'supergroup', 'channel')
+            ORDER BY title NULLS LAST, chat_id;
+        """)
+        return rows
+
+async def delete_chat(pool: asyncpg.Pool, chat_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM bot_chats WHERE chat_id = $1;", chat_id)
+
 async def is_chat_registered(pool: asyncpg.Pool, chat_id: int):
     async with pool.acquire() as conn:
         exists = await conn.fetchval(
