@@ -76,3 +76,66 @@ async def close_ticket(pool: asyncpg.Pool, ticket_id: int, admin_id: int, answer
             SET status = 'closed', answer = $1, admin_id = $2, answered_at = CURRENT_TIMESTAMP
             WHERE ticket_id = $3;
         """, answer_text, admin_id, ticket_id)
+
+
+async def create_course(pool: asyncpg.Pool, slug: str, lang: str, title: str, description: str, photo: str | None = None):
+    async with pool.acquire() as conn:
+        course_id = await conn.fetchval("""
+            INSERT INTO courses (slug, lang, title, description, photo)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING course_id;
+        """, slug, lang, title, description, photo)
+        return course_id
+
+
+async def get_courses_by_lang(pool: asyncpg.Pool, lang: str):
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM courses WHERE lang = $1 ORDER BY created_at;", lang)
+        return rows
+
+
+async def get_course_by_slug(pool: asyncpg.Pool, slug: str, lang: str | None = None):
+    async with pool.acquire() as conn:
+        if lang:
+            row = await conn.fetchrow("SELECT * FROM courses WHERE slug = $1 AND lang = $2;", slug, lang)
+        else:
+            row = await conn.fetchrow("SELECT * FROM courses WHERE slug = $1;", slug)
+        return row
+
+
+async def get_course_by_id(pool: asyncpg.Pool, course_id: int):
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM courses WHERE course_id = $1;", course_id)
+        return row
+
+
+async def update_course(pool: asyncpg.Pool, course_id: int, title: str | None = None, description: str | None = None, slug: str | None = None):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE courses
+            SET title = COALESCE($1, title), description = COALESCE($2, description), slug = COALESCE($3, slug), updated_at = CURRENT_TIMESTAMP
+            WHERE course_id = $4;
+        """, title, description, slug, course_id)
+
+
+async def set_course_photo(pool: asyncpg.Pool, course_id: int, photo: str):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE courses
+            SET photo = $1, updated_at = CURRENT_TIMESTAMP
+            WHERE course_id = $2;
+        """, photo, course_id)
+
+
+async def remove_course_photo(pool: asyncpg.Pool, course_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE courses
+            SET photo = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE course_id = $1;
+        """, course_id)
+
+
+async def delete_course(pool: asyncpg.Pool, course_id: int):
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM courses WHERE course_id = $1;", course_id)

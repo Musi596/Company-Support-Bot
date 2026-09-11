@@ -43,4 +43,15 @@ async def create_tables(pool):
                 title VARCHAR(255) DEFAULT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );""")
+        await connection.execute("""
+            CREATE TABLE IF NOT EXISTS courses (
+                course_id BIGSERIAL PRIMARY KEY,
+                slug VARCHAR(100) NOT NULL UNIQUE,
+                lang VARCHAR(10) NOT NULL,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                photo TEXT DEFAULT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );""")
         print("Tables Created")
