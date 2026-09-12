@@ -1,78 +1,136 @@
 import asyncio
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
+from typing import Any
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from dotenv import load_dotenv
 
-from bot import services, buttons, sql
-from bot.fsm import ReportStates, AdminStates, CourseStates, BroadcastStates
+from bot import buttons, services, sql
+from bot.fsm import AdminStates, BroadcastStates, CourseStates, ReportStates
+from bot.utils import normalize_slug
+
+load_dotenv()
+
+API_TOKEN = os.getenv("API_TOKEN")
+if not API_TOKEN:
+    raise RuntimeError("API_TOKEN is not set in environment")
+
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+db_pool: Any = None
+
+LANG_TITLES = {
+    "tj": "Выберите курс на языке Тоҷикӣ:",
+    "ru": "Выберите курс:",
+    "en": "Choose a course:",
+}
+
+COURSE_LANGUAGE_NAMES = {
+    "tj": "Тоҷикӣ",
+    "ru": "Русский",
+    "en": "English",
+}
 
 
-async def safe_callback_answer(callback: CallbackQuery, text: str | None = None, *, show_alert: bool = False):
+async def safe_callback_answer(
+    callback: CallbackQuery,
+    text: str | None = None,
+    *,
+    show_alert: bool = False,
+):
     try:
         await callback.answer(text, show_alert=show_alert)
     except TelegramBadRequest:
         pass
 
 
-async def safe_edit_message(callback: CallbackQuery, text: str, *, parse_mode=None, reply_markup=None):
+async def safe_edit_message(
+    callback: CallbackQuery,
+    text: str,
+    *,
+    parse_mode=None,
+    reply_markup=None,
+):
     if callback.message is None:
         return
+
     try:
-        if callback.message.content_type == 'photo':
+        if callback.message.content_type == "photo":
             try:
-                await callback.message.edit_caption(caption=text, parse_mode=parse_mode, reply_markup=reply_markup)
+                await callback.message.edit_caption(
+                    caption=text,
+                    parse_mode=parse_mode,
+                    reply_markup=reply_markup,
+                )
                 return
             except TelegramBadRequest:
                 pass
-        await callback.message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        await callback.message.edit_text(
+            text,
+            parse_mode=parse_mode,
+            reply_markup=reply_markup,
+        )
     except TelegramBadRequest:
         try:
-            await callback.message.answer(text, parse_mode=parse_mode, reply_markup=reply_markup)
+            await callback.message.answer(
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+            )
         except TelegramBadRequest:
             pass
 
-API_TOKEN = os.getenv('API_TOKEN')
-if not API_TOKEN:
-    raise RuntimeError('API_TOKEN is not set in environment')
-
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
-
 
 def is_group_chat(chat) -> bool:
-    return chat.type in {'group', 'supergroup', 'channel'}
+    return chat.type in {"group", "supergroup", "channel"}
+
+
+def build_course_list_keyboard(courses, lang: str):
+    rows = []
+    current_row = []
+
+    for course in courses:
+        current_row.append(
+            InlineKeyboardButton(
+                text=course["title"],
+                callback_data=f"courses_course:{lang}:{course['slug']}",
+            )
+        )
+        if len(current_row) == 2:
+            rows.append(current_row)
+            current_row = []
+
+    if current_row:
+        rows.append(current_row)
+
+    rows.append([
+        InlineKeyboardButton(text="🔙 Назад к выбору языка", callback_data="courses_menu")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 @dp.message(Command("add_group"))
 async def add_group_to_broadcast(message: Message):
-    if message.chat.type not in {'group', 'supergroup', 'channel'}:
-        await message.answer("⚠️ Вы не находитесь в группе. Команда /add_group доступна только внутри группы.")
+    if not is_group_chat(message.chat):
+        await message.answer("⚠️ Команда /add_group доступна только в группе.")
         return
 
-    pool = db_pool
-    if not await services.is_admin(pool, message.from_user.id):
+    if not await services.is_admin(db_pool, message.from_user.id):
         await message.answer("⚠️ Только администратор бота может подключать эту группу к рассылке.")
         return
 
     await services.save_or_update_chat(
-        pool,
+        db_pool,
         message.chat.id,
         message.chat.type,
-        message.chat.title or message.chat.username
+        message.chat.title or message.chat.username,
     )
-
-    await message.answer(
-        "✅ Группа добавлена в список для рассылок. "
-        "Теперь бот сможет отправлять сюда сообщения."
-    )
+    await message.answer("✅ Группа добавлена в список рассылок.")
 
 
 @dp.message(Command("courses"))
@@ -82,117 +140,92 @@ async def cmd_courses(message: Message):
 
     await message.answer(
         "Выберите язык, на котором хотите узнать о курсах:",
-        reply_markup=buttons.get_courses_language_keyboard()
+        reply_markup=buttons.get_courses_language_keyboard(),
     )
 
 
 @dp.callback_query(F.data == "courses_menu")
 async def courses_menu(callback: CallbackQuery):
-    await callback.message.edit_text(
+    await safe_edit_message(
+        callback,
         "Выберите язык, на котором хотите узнать о курсах:",
-        reply_markup=buttons.get_courses_language_keyboard()
+        reply_markup=buttons.get_courses_language_keyboard(),
     )
-    await callback.answer()
+    await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data.startswith("courses_lang:"))
 async def courses_language(callback: CallbackQuery):
-    lang = callback.data.split(":")[1]
-    language_names = {
-        "tj": "Тоҷикӣ",
-        "ru": "Русский",
-        "en": "English",
-    }
-    titles = {
-        "tj": "Выберите курс на языке Тоҷикӣ:",
-        "ru": "Выберите курс:",
-        "en": "Choose a course:",
-    }
-
+    lang = callback.data.split(":", 1)[1]
     pool = db_pool
     courses = await services.get_courses_by_lang(pool, lang)
 
     if not courses:
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             "Пока нет курсов для выбранного языка.",
-            reply_markup=buttons.get_courses_back_keyboard()
+            reply_markup=buttons.get_courses_back_keyboard(),
         )
-        await callback.answer()
+        await safe_callback_answer(callback)
         return
 
-    rows = []
-    current = []
-    for c in courses:
-        current.append(InlineKeyboardButton(text=c['title'], callback_data=f"courses_course:{lang}:{c['slug']}"))
-        if len(current) == 2:
-            rows.append(current)
-            current = []
-    if current:
-        rows.append(current)
-
-    rows.append([InlineKeyboardButton(text="🔙 Назад к выбору языка", callback_data="courses_menu")])
-
-    kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    await callback.message.edit_text(titles.get(lang, "Выберите курс:"), reply_markup=kb)
-    await callback.answer()
+    kb = build_course_list_keyboard(courses, lang)
+    await safe_edit_message(
+        callback,
+        LANG_TITLES.get(lang, "Выберите курс:"),
+        reply_markup=kb,
+    )
+    await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data.startswith("courses_list:"))
 async def courses_list(callback: CallbackQuery):
-    lang = callback.data.split(":")[1]
-    titles = {
-        "tj": "Выберите курс на языке Тоҷикӣ:",
-        "ru": "Выберите курс:",
-        "en": "Choose a course:",
-    }
-
-    pool = db_pool
-    courses = await services.get_courses_by_lang(pool, lang)
+    lang = callback.data.split(":", 1)[1]
+    courses = await services.get_courses_by_lang(db_pool, lang)
 
     if not courses:
-        await callback.message.edit_text(
+        await safe_edit_message(
+            callback,
             "Пока нет курсов для выбранного языка.",
-            reply_markup=buttons.get_courses_back_keyboard()
+            reply_markup=buttons.get_courses_back_keyboard(),
         )
-        await callback.answer()
+        await safe_callback_answer(callback)
         return
 
-    rows = []
-    current = []
-    for c in courses:
-        current.append(InlineKeyboardButton(text=c['title'], callback_data=f"courses_course:{lang}:{c['slug']}"))
-        if len(current) == 2:
-            rows.append(current)
-            current = []
-    if current:
-        rows.append(current)
-
-    rows.append([InlineKeyboardButton(text="🔙 Назад к выбору языка", callback_data="courses_menu")])
-    kb = InlineKeyboardMarkup(inline_keyboard=rows)
-
-    await callback.message.edit_text(titles.get(lang, "Выберите курс:"), reply_markup=kb)
-    await callback.answer()
+    kb = build_course_list_keyboard(courses, lang)
+    await safe_edit_message(
+        callback,
+        LANG_TITLES.get(lang, "Выберите курс:"),
+        reply_markup=kb,
+    )
+    await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data.startswith("courses_course:"))
 async def courses_detail(callback: CallbackQuery):
-    _, lang, course_id = callback.data.split(":", 2)
-    pool = db_pool
-    course = await services.get_course_by_slug(pool, course_id, lang)
-    if course:
-        text = course['description'] or course['title']
-        kb = buttons.get_courses_detail_keyboard(lang)
-        if course['photo']:
-            try:
-                await callback.message.answer_photo(photo=course['photo'], caption=text, reply_markup=kb)
-                await callback.answer()
-                return
-            except Exception:
-                pass
-        await callback.message.edit_text(text, reply_markup=kb)
-        await callback.answer()
+    _, lang, slug = callback.data.split(":", 2)
+    course = await services.get_course_by_slug(db_pool, slug, lang)
+    if not course:
+        await safe_callback_answer(callback, "Курс не найден.", show_alert=True)
         return
-    await callback.answer("Курс не найден.", show_alert=True)
+
+    text = course["description"] or course["title"]
+    kb = buttons.get_courses_detail_keyboard(lang)
+
+    if course["photo"]:
+        try:
+            await callback.message.answer_photo(
+                photo=course["photo"],
+                caption=text,
+                reply_markup=kb,
+            )
+            await safe_callback_answer(callback)
+            return
+        except Exception:
+            pass
+
+    await safe_edit_message(callback, text, reply_markup=kb)
+    await safe_callback_answer(callback)
 
 
 @dp.message(CommandStart())
@@ -200,48 +233,40 @@ async def cmd_start(message: Message):
     if is_group_chat(message.chat):
         return
 
-    pool = db_pool
-    await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
+    await services.save_or_update_user(db_pool, message.from_user.id, message.from_user.full_name)
+    is_admin = await services.is_admin(db_pool, message.from_user.id)
 
-    is_admin = await services.is_admin(pool, message.from_user.id)
+    await message.answer_sticker(
+        sticker="CAACAgIAAxkBAAER3dRqns8OAAFAJ_41_64myZOJ35l9DIQAAkaFAAJtfQABSYjWiVDXg4rkPQQ"
+    )
+
     if is_admin:
-        await message.answer_sticker(
-            sticker='CAACAgIAAxkBAAER3dRqns8OAAFAJ_41_64myZOJ35l9DIQAAkaFAAJtfQABSYjWiVDXg4rkPQQ'
-        )
         await message.answer(
             "👑 *Добро пожаловать, администратор!*\n\n"
             "Вы можете просматривать новые вопросы и жалобы, отвечать на них и закрывать обращения.",
             parse_mode="Markdown",
-            reply_markup=buttons.get_admin_main_keyboard()
+            reply_markup=buttons.get_admin_main_keyboard(),
         )
         return
 
-    await message.answer_sticker(
-        sticker='CAACAgIAAxkBAAER3dRqns8OAAFAJ_41_64myZOJ35l9DIQAAkaFAAJtfQABSYjWiVDXg4rkPQQ'
-    )
-
     await message.answer(
         "✨ *Добро пожаловать в SoftClub!* 🚀\n\n"
-        "Рады видеть вас в нашем учебном центре программирования! "
-        "Мы создаем условия для эффективного старта и развития в IT.\n\n"
+        "Рады видеть вас в нашем учебном центре программирования.\n\n"
         "📌 *Основные команды:*\n\n"
         "📚 /help — Узнать о SoftClub и боте\n"
         "📝 /report — Отправить вопрос или жалобу администрации\n\n"
         "💡 _Выберите нужную команду выше или введите её._",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
 
 
 @dp.callback_query(F.data == "admin_open_tickets")
 async def admin_open_tickets(callback: CallbackQuery):
-    pool = db_pool
-    admin_id = callback.from_user.id
-
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
-    tickets = await services.get_open_tickets(pool)
+    tickets = await services.get_open_tickets(db_pool)
     if not tickets:
         await safe_edit_message(
             callback,
@@ -251,71 +276,65 @@ async def admin_open_tickets(callback: CallbackQuery):
         await safe_callback_answer(callback, "Нет новых обращений.")
         return
 
-    ticket_lines = []
+    lines = []
     for ticket in tickets:
-        preview = ticket['question'].replace('\n', ' ')[:70]
-        if len(ticket['question']) > 70:
-            preview += '...'
-        ticket_lines.append(f"#{ticket['ticket_id']} • {ticket['user_name']} • {preview}")
+        preview = ticket["question"].replace("\n", " ")[:70]
+        if len(ticket["question"]) > 70:
+            preview += "..."
+        lines.append(f"#{ticket['ticket_id']} • {ticket['user_name']} • {preview}")
 
-    text = "📋 *Неотвеченные вопросы и жалобы:*\n\n" + "\n".join(ticket_lines)
-    await safe_edit_message(callback, text, parse_mode="Markdown", reply_markup=buttons.get_admin_ticket_list_keyboard(tickets))
+    text = "📋 *Неотвеченные вопросы и жалобы:*\n\n" + "\n".join(lines)
+    await safe_edit_message(
+        callback,
+        text,
+        parse_mode="Markdown",
+        reply_markup=buttons.get_admin_ticket_list_keyboard(tickets),
+    )
     await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data == "admin_manage_courses")
 async def admin_manage_courses(callback: CallbackQuery):
-    pool = db_pool
-    admin_id = callback.from_user.id
-
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
-    courses = await services.get_courses_by_lang(pool, 'ru')
-    courses += await services.get_courses_by_lang(pool, 'en')
-    courses += await services.get_courses_by_lang(pool, 'tj')
+    courses = []
+    for lang in ("ru", "en", "tj"):
+        courses.extend(await services.get_courses_by_lang(db_pool, lang))
 
-    keyboard_rows = []
-    keyboard_rows.append([
-        InlineKeyboardButton(text="➕ Добавить курс", callback_data="admin_add_course")
-    ])
-
-    for c in courses:
+    keyboard_rows = [[InlineKeyboardButton(text="➕ Добавить курс", callback_data="admin_add_course")]]
+    for course in courses:
         keyboard_rows.append([
-            InlineKeyboardButton(text=f"{c['lang']} • {c['slug']} — {c['title']}", callback_data=f"admin_course:{c['course_id']}")
+            InlineKeyboardButton(
+                text=f"{course['lang']} • {course['slug']} — {course['title']}",
+                callback_data=f"admin_course:{course['course_id']}",
+            )
         ])
+    keyboard_rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_open_tickets")])
 
-    keyboard_rows.append([
-        InlineKeyboardButton(text="🔙 Назад", callback_data="admin_open_tickets")
-    ])
-
-    kb = InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-    await safe_edit_message(callback, "🛠 Управление курсами:", reply_markup=kb)
+    await safe_edit_message(callback, "🛠 Управление курсами:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows))
     await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data == "admin_view_groups")
 async def admin_view_groups(callback: CallbackQuery):
-    pool = db_pool
-    admin_id = callback.from_user.id
-
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
-    chats = await services.get_registered_chats(pool)
-    keyboard = buttons.get_group_list_keyboard(chats)
-    await safe_edit_message(callback, "👥 Подключённые группы:\n\nВыберите группу для удаления из списка рассылки.", reply_markup=keyboard)
+    chats = await services.get_registered_chats(db_pool)
+    await safe_edit_message(
+        callback,
+        "👥 Подключённые группы:\n\nВыберите группу для удаления из списка рассылки.",
+        reply_markup=buttons.get_group_list_keyboard(chats),
+    )
     await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data.startswith("admin_group_delete:"))
 async def admin_group_delete(callback: CallbackQuery):
-    pool = db_pool
-    admin_id = callback.from_user.id
-
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
@@ -325,15 +344,14 @@ async def admin_group_delete(callback: CallbackQuery):
     except Exception:
         pass
 
-    await services.delete_chat(pool, chat_id)
+    await services.delete_chat(db_pool, chat_id)
     await admin_view_groups(callback)
     await safe_callback_answer(callback, "Группа удалена и бот вышел из неё.")
 
 
 @dp.callback_query(F.data == "admin_add_course")
 async def admin_add_course_start(callback: CallbackQuery, state: FSMContext):
-    pool = db_pool
-    if not await services.is_admin(pool, callback.from_user.id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
@@ -345,9 +363,10 @@ async def admin_add_course_start(callback: CallbackQuery, state: FSMContext):
 @dp.message(CourseStates.waiting_for_lang, F.text)
 async def course_waiting_lang(message: Message, state: FSMContext):
     lang = message.text.strip().lower()
-    if lang not in ('ru', 'tj', 'en'):
+    if lang not in {"ru", "tj", "en"}:
         await message.answer("Неверный язык. Введите один из: ru, tj, en")
         return
+
     await state.update_data(lang=lang)
     await message.answer("Введите уникальный идентификатор курса (slug), например: python или ai")
     await state.set_state(CourseStates.waiting_for_slug)
@@ -355,7 +374,11 @@ async def course_waiting_lang(message: Message, state: FSMContext):
 
 @dp.message(CourseStates.waiting_for_slug, F.text)
 async def course_waiting_slug(message: Message, state: FSMContext):
-    slug = message.text.strip()
+    slug = normalize_slug(message.text)
+    if not slug or slug == "course":
+        await message.answer("Слаг не может быть пустым. Попробуйте ещё раз.")
+        return
+
     await state.update_data(slug=slug)
     await message.answer("Введите заголовок курса (короткое название):")
     await state.set_state(CourseStates.waiting_for_title)
@@ -364,16 +387,19 @@ async def course_waiting_slug(message: Message, state: FSMContext):
 @dp.message(CourseStates.waiting_for_title, F.text)
 async def course_waiting_title(message: Message, state: FSMContext):
     title = message.text.strip()
+    if not title:
+        await message.answer("Заголовок не может быть пустым.")
+        return
+
     data = await state.get_data()
-    editing_course_id = data.get('editing_course_id')
+    editing_course_id = data.get("editing_course_id")
 
     if editing_course_id:
-        pool = db_pool
         try:
-            await services.update_course(pool, editing_course_id, title=title)
+            await services.update_course(db_pool, editing_course_id, title=title)
             await message.answer("✅ Название курса обновлено.")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка при обновлении курса: {e}")
+        except Exception as exc:
+            await message.answer(f"❌ Ошибка при обновлении курса: {exc}")
         await state.clear()
         return
 
@@ -392,18 +418,13 @@ async def course_waiting_description(message: Message, state: FSMContext):
 
 @dp.message(CourseStates.waiting_for_photo, F.photo | F.text)
 async def course_waiting_photo(message: Message, state: FSMContext):
-    pool = db_pool
     data = await state.get_data()
-    lang = data.get('lang')
-    slug = data.get('slug')
-    title = data.get('title')
-    description = data.get('description')
-    editing_course_id = data.get('editing_course_id')
+    editing_course_id = data.get("editing_course_id")
 
     photo_file_id = None
     if message.photo:
         photo_file_id = message.photo[-1].file_id
-    elif message.text and message.text.strip().lower() == '/skip':
+    elif message.text and message.text.strip().lower() == "/skip":
         photo_file_id = None
     else:
         await message.answer("Отправьте фото или /skip")
@@ -412,19 +433,36 @@ async def course_waiting_photo(message: Message, state: FSMContext):
     if editing_course_id:
         try:
             if photo_file_id:
-                await services.set_course_photo(pool, editing_course_id, photo_file_id)
+                await services.set_course_photo(db_pool, editing_course_id, photo_file_id)
                 await message.answer("✅ Фото курса обновлено.")
             else:
                 await message.answer("❌ Фото не было отправлено.")
-        except Exception as e:
-            await message.answer(f"❌ Ошибка при обновлении фото: {e}")
+        except Exception as exc:
+            await message.answer(f"❌ Ошибка при обновлении фото: {exc}")
+        await state.clear()
+        return
+
+    lang = data.get("lang")
+    slug = data.get("slug")
+    title = data.get("title")
+    description = data.get("description")
+
+    if not all([lang, slug, title]):
+        await message.answer("❌ Не хватает данных для создания курса. Начните заново.")
         await state.clear()
         return
 
     try:
-        course_id = await services.create_course(pool, slug, lang, title, description, photo_file_id)
-    except Exception as e:
-        await message.answer(f"❌ Ошибка при создании курса: {e}")
+        course_id = await services.create_course(
+            db_pool,
+            slug,
+            lang,
+            title,
+            description or "",
+            photo_file_id,
+        )
+    except Exception as exc:
+        await message.answer(f"❌ Ошибка при создании курса: {exc}")
         await state.clear()
         return
 
@@ -434,29 +472,34 @@ async def course_waiting_photo(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("admin_course:"))
 async def admin_course_view(callback: CallbackQuery):
-    pool = db_pool
-    admin_id = callback.from_user.id
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     course_id = int(callback.data.split(":", 1)[1])
-    course = await services.get_course_by_id(pool, course_id)
+    course = await services.get_course_by_id(db_pool, course_id)
     if not course:
         await safe_callback_answer(callback, "Курс не найден.", show_alert=True)
         return
 
     text = f"🎓 {course['title']}\n\n{course['description'] or ''}\n\n(lang: {course['lang']}, slug: {course['slug']})"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✏️ Редактировать информацию", callback_data=f"admin_course_action:edit_info:{course_id}"),
+                InlineKeyboardButton(text="🖼️ Изменить фото", callback_data=f"admin_course_action:change_photo:{course_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🗑 Удалить фото", callback_data=f"admin_course_action:remove_photo:{course_id}"),
+                InlineKeyboardButton(text="❌ Удалить курс", callback_data=f"admin_course_action:delete:{course_id}"),
+            ],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_manage_courses")],
+        ]
+    )
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Редактировать информацию", callback_data=f"admin_course_action:edit_info:{course_id}"), InlineKeyboardButton(text="🖼️ Изменить фото", callback_data=f"admin_course_action:change_photo:{course_id}")],
-        [InlineKeyboardButton(text="🗑 Удалить фото", callback_data=f"admin_course_action:remove_photo:{course_id}"), InlineKeyboardButton(text="❌ Удалить курс", callback_data=f"admin_course_action:delete:{course_id}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_manage_courses")]
-    ])
-
-    if course['photo']:
+    if course["photo"]:
         try:
-            await callback.message.answer_photo(photo=course['photo'], caption=text, reply_markup=kb)
+            await callback.message.answer_photo(photo=course["photo"], caption=text, reply_markup=kb)
         except Exception:
             await safe_edit_message(callback, text, reply_markup=kb)
     else:
@@ -467,32 +510,30 @@ async def admin_course_view(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("admin_course_action:"))
 async def admin_course_action(callback: CallbackQuery, state: FSMContext):
-    pool = db_pool
-    admin_id = callback.from_user.id
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     _, action, course_id = callback.data.split(":", 2)
     course_id = int(course_id)
 
-    if action == 'edit_info':
+    if action == "edit_info":
         await state.update_data(editing_course_id=course_id)
         await callback.message.answer("Введите новое название курса (или отправьте /skip чтобы не менять):")
         await state.set_state(CourseStates.waiting_for_title)
-    elif action == 'change_photo':
+    elif action == "change_photo":
         await state.update_data(editing_course_id=course_id)
         await callback.message.answer("Отправьте новое фото для курса:")
         await state.set_state(CourseStates.waiting_for_photo)
-    elif action == 'remove_photo':
-        await services.remove_course_photo(pool, course_id)
+    elif action == "remove_photo":
+        await services.remove_course_photo(db_pool, course_id)
         await safe_callback_answer(callback, "Фото удалено.")
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
         except TelegramBadRequest:
             pass
-    elif action == 'delete':
-        await services.delete_course(pool, course_id)
+    elif action == "delete":
+        await services.delete_course(db_pool, course_id)
         await safe_callback_answer(callback, "Курс удалён.")
         try:
             await callback.message.edit_reply_markup(reply_markup=None)
@@ -504,24 +545,18 @@ async def admin_course_action(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
-    pool = db_pool
-    admin_id = callback.from_user.id
-
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
-    kb = buttons.get_broadcast_mode_keyboard()
-    await safe_edit_message(callback, "📣 Куда отправлять рассылку?", reply_markup=kb)
+    await safe_edit_message(callback, "📣 Куда отправлять рассылку?", reply_markup=buttons.get_broadcast_mode_keyboard())
     await state.update_data(broadcast_all=False, selected_chat_ids=[])
     await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data.startswith("broadcast_target:"))
 async def broadcast_target(callback: CallbackQuery, state: FSMContext):
-    pool = db_pool
-    admin_id = callback.from_user.id
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
@@ -529,14 +564,11 @@ async def broadcast_target(callback: CallbackQuery, state: FSMContext):
     if target == "all":
         await state.set_state(BroadcastStates.waiting_for_broadcast)
         await state.update_data(broadcast_all=True, selected_chat_ids=[])
-        await callback.message.answer(
-            "📣 Теперь отправьте текст или фото для рассылки по всем группам.\n\n"
-            "Для отмены напишите /cancel"
-        )
+        await callback.message.answer("📣 Теперь отправьте текст или фото для рассылки по всем группам.\n\nДля отмены напишите /cancel")
         await safe_callback_answer(callback)
         return
 
-    chats = await services.get_registered_chats(pool)
+    chats = await services.get_registered_chats(db_pool)
     if not chats:
         await safe_callback_answer(callback, "📭 Нет подключённых групп.", show_alert=True)
         return
@@ -547,27 +579,28 @@ async def broadcast_target(callback: CallbackQuery, state: FSMContext):
 
 
 async def render_broadcast_selection(callback: CallbackQuery, state: FSMContext):
-    pool = db_pool
     data = await state.get_data()
-    selected_ids = set(int(x) for x in data.get('selected_chat_ids', []))
-    chats = await services.get_registered_chats(pool)
-
-    kb = buttons.get_broadcast_group_selection_keyboard(chats, selected_ids)
-    await safe_edit_message(callback, "📣 Выберите группы для рассылки:\n\n✅ — выбрана, ⬜ — не выбрана", reply_markup=kb)
+    selected_ids = {int(item) for item in data.get("selected_chat_ids", [])}
+    chats = await services.get_registered_chats(db_pool)
+    keyboard = buttons.get_broadcast_group_selection_keyboard(chats, selected_ids)
+    await safe_edit_message(
+        callback,
+        "📣 Выберите группы для рассылки:\n\n✅ — выбрана, ⬜ — не выбрана",
+        reply_markup=keyboard,
+    )
     await safe_callback_answer(callback)
 
 
 @dp.callback_query(F.data.startswith("broadcast_toggle:"))
 async def broadcast_toggle(callback: CallbackQuery, state: FSMContext):
-    pool = db_pool
-    admin_id = callback.from_user.id
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
     chat_id = int(callback.data.split(":", 1)[1])
     data = await state.get_data()
-    selected = list(data.get('selected_chat_ids', []))
+    selected = list(data.get("selected_chat_ids", []))
+
     if chat_id in selected:
         selected.remove(chat_id)
     else:
@@ -579,34 +612,28 @@ async def broadcast_toggle(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "broadcast_send_selected")
 async def broadcast_send_selected(callback: CallbackQuery, state: FSMContext):
-    pool = db_pool
-    admin_id = callback.from_user.id
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
-    selected = [int(x) for x in (await state.get_data()).get('selected_chat_ids', [])]
+    selected = [int(item) for item in (await state.get_data()).get("selected_chat_ids", [])]
     if not selected:
         await safe_callback_answer(callback, "Выберите хотя бы одну группу.", show_alert=True)
         return
 
     await state.update_data(broadcast_all=False)
-    await callback.message.answer(
-        "📣 Теперь отправьте текст или фото для выбранных групп.\n\n"
-        "Для отмены напишите /cancel"
-    )
+    await callback.message.answer("📣 Теперь отправьте текст или фото для выбранных групп.\n\nДля отмены напишите /cancel")
     await state.set_state(BroadcastStates.waiting_for_broadcast)
     await safe_callback_answer(callback)
 
 
 @dp.message(BroadcastStates.waiting_for_broadcast, F.text | F.photo)
 async def process_broadcast_message(message: Message, state: FSMContext):
-    pool = db_pool
-    if not await services.is_admin(pool, message.from_user.id):
+    if not await services.is_admin(db_pool, message.from_user.id):
         await message.answer("⚠️ У вас нет прав на рассылку.")
         return
 
-    if message.text and message.text.strip().lower() == '/cancel':
+    if message.text and message.text.strip().lower() == "/cancel":
         await state.clear()
         await message.answer("❌ Рассылка отменена.")
         return
@@ -619,10 +646,9 @@ async def process_broadcast_message(message: Message, state: FSMContext):
         return
 
     state_data = await state.get_data()
-    if state_data.get('broadcast_all'):
-        chats = await services.get_broadcast_chat_ids(pool)
-    else:
-        chats = [int(x) for x in state_data.get('selected_chat_ids', [])]
+    chats = await services.get_broadcast_chat_ids(db_pool) if state_data.get("broadcast_all") else [
+        int(item) for item in state_data.get("selected_chat_ids", [])
+    ]
 
     if not chats:
         await state.clear()
@@ -654,14 +680,12 @@ async def process_broadcast_message(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("ticket_select:"))
 async def ticket_select(callback: CallbackQuery):
-    pool = db_pool
-    ticket_id = int(callback.data.split(':')[1])
-
-    if not await services.is_admin(pool, callback.from_user.id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await safe_callback_answer(callback, "⚠️ У вас нет прав администратора.", show_alert=True)
         return
 
-    ticket = await services.get_ticket_by_id(pool, ticket_id)
+    ticket_id = int(callback.data.split(":", 1)[1])
+    ticket = await services.get_ticket_by_id(db_pool, ticket_id)
     if not ticket:
         await safe_callback_answer(callback, "⚠️ Обращение не найдено.", show_alert=True)
         return
@@ -673,20 +697,25 @@ async def ticket_select(callback: CallbackQuery):
         f"📝 *Текст:*\n_{ticket['question']}_"
     )
 
-    if ticket.get('photo'):
+    if ticket.get("photo"):
         try:
             await callback.message.answer_photo(
-                photo=ticket['photo'],
+                photo=ticket["photo"],
                 caption=message_text,
                 parse_mode="Markdown",
-                reply_markup=buttons.get_ticket_detail_keyboard(ticket_id)
+                reply_markup=buttons.get_ticket_detail_keyboard(ticket_id),
             )
             await safe_callback_answer(callback)
             return
         except Exception:
             pass
 
-    await safe_edit_message(callback, message_text, parse_mode="Markdown", reply_markup=buttons.get_ticket_detail_keyboard(ticket_id))
+    await safe_edit_message(
+        callback,
+        message_text,
+        parse_mode="Markdown",
+        reply_markup=buttons.get_ticket_detail_keyboard(ticket_id),
+    )
     await safe_callback_answer(callback)
 
 
@@ -695,21 +724,40 @@ async def cmd_help(message: Message):
     if is_group_chat(message.chat):
         return
 
-    await message.answer("📚 *Инструкция по использованию бота SoftClub Support*\n\n"
-                         "Этот бот — прямая связь с администрацией учебного центра.\n\n"
-                         "👉 Чтобы отправить вопрос, отзыв или жалобу, нажмите /report.\n"
-                         "👉 Чтобы перезапустить бота, нажмите /start.\n"
-                         "👉 Чтобы посмотреть информацию про курсы /courses",parse_mode='Markdown')
+    await message.answer(
+        "📚 *Инструкция по использованию бота SoftClub Support*\n\n"
+        "Этот бот — прямая связь с администрацией учебного центра.\n\n"
+        "👉 Чтобы отправить вопрос, отзыв или жалобу, нажмите /report.\n"
+        "👉 Чтобы перезапустить бота, нажмите /start.\n"
+        "👉 Чтобы посмотреть информацию про курсы, используйте /courses",
+        parse_mode="Markdown",
+    )
+
 
 @dp.message(Command("report"))
 async def cmd_report(message: Message, state: FSMContext):
     if is_group_chat(message.chat):
         return
 
-    pool = db_pool
-    await services.save_or_update_user(pool, message.from_user.id, message.from_user.full_name)
-    await message.answer("📝 Пожалуйста, напишите ваш вопрос или жалобу в одном текстовом сообщении 👇")
+    await services.save_or_update_user(db_pool, message.from_user.id, message.from_user.full_name)
+    await message.answer("📝 Пожалуйста, напишите ваш вопрос или жалобу в одном текстовом сообщении 👇\n\nДля отмены напишите /cancel")
     await state.set_state(ReportStates.waiting_for_question)
+
+
+@dp.message(Command("cancel"))
+@dp.message(Command("cancle"))
+async def cancel_report(message: Message, state: FSMContext):
+    if is_group_chat(message.chat):
+        return
+
+    current_state = await state.get_state()
+    if current_state == ReportStates.waiting_for_question:
+        await state.clear()
+        await message.answer("❌ Вы отменили отправку обращения. Можно начать заново через /report")
+        return
+
+    await message.answer("❌ Нет активной формы для отмены. Чтобы отправить обращение, используйте /report")
+
 
 @dp.message(ReportStates.waiting_for_question, F.text | F.photo)
 async def process_question(message: Message, state: FSMContext):
@@ -717,7 +765,6 @@ async def process_question(message: Message, state: FSMContext):
         await state.clear()
         return
 
-    pool = db_pool
     question_text = message.caption if message.photo else message.text
     if not question_text:
         question_text = "Пользователь отправил фото без текста."
@@ -727,14 +774,14 @@ async def process_question(message: Message, state: FSMContext):
     photo_file_id = message.photo[-1].file_id if message.photo else None
 
     await state.clear()
-    ticket_id = await services.create_ticket(pool, user_id, user_name, question_text, photo_file_id)
+    ticket_id = await services.create_ticket(db_pool, user_id, user_name, question_text, photo_file_id)
 
     await message.answer(
         f"✅ Спасибо! Ваш вопрос принят (ID обращения: #{ticket_id}).\n"
-        f"Администрация свяжется с вами в ближайшее время. 👍"
+        "Администрация свяжется с вами в ближайшее время. 👍"
     )
 
-    admins = await services.get_all_admins(pool)
+    admins = await services.get_all_admins(db_pool)
     if not admins:
         return
 
@@ -752,42 +799,56 @@ async def process_question(message: Message, state: FSMContext):
                     photo=photo_file_id,
                     caption=admin_message_text,
                     parse_mode="Markdown",
-                    reply_markup=buttons.get_admin_action_keyboard(ticket_id)
+                    reply_markup=buttons.get_admin_action_keyboard(ticket_id),
                 )
             else:
                 await bot.send_message(
                     admin_id,
                     admin_message_text,
                     parse_mode="Markdown",
-                    reply_markup=buttons.get_admin_action_keyboard(ticket_id)
+                    reply_markup=buttons.get_admin_action_keyboard(ticket_id),
                 )
-        except Exception as e:
-            print(f"Ошибка отправки админу {admin_id}: {e}")
+        except Exception as exc:
+            print(f"Ошибка отправки админу {admin_id}: {exc}")
+
 
 @dp.callback_query(F.data.startswith("skip_tk:"))
 async def process_skip_callback(callback: CallbackQuery):
+    if callback.message is None:
+        return
+
+    text = callback.message.text or ""
     await bot.edit_message_text(
         chat_id=callback.message.chat.id,
         message_id=callback.message.message_id,
-        text=f"{callback.message.text}\n\n⏩ _Администратор {callback.from_user.full_name} пропустил это обращение._",
-        parse_mode="Markdown"
+        text=f"{text}\n\n⏩ _Администратор {callback.from_user.full_name} пропустил это обращение._",
+        parse_mode="Markdown",
     )
     await callback.answer("Тикет пропущен.")
 
+
 @dp.callback_query(F.data.startswith("reply_tk:"))
 async def process_reply_callback(callback: CallbackQuery, state: FSMContext):
-    pool = db_pool
-    ticket_id = int(callback.data.split(':')[1])
-    admin_id = callback.from_user.id
-    
-    if not await services.is_admin(pool, admin_id):
+    if not await services.is_admin(db_pool, callback.from_user.id):
         await callback.answer("⚠️ Вы не являетесь администратором.", show_alert=True)
         return
 
-    ticket = await services.get_ticket_by_id(pool, ticket_id)
-    if ticket['status'] == 'closed':
+    ticket_id = int(callback.data.split(":", 1)[1])
+    ticket = await services.get_ticket_by_id(db_pool, ticket_id)
+    if not ticket:
+        await callback.answer("⚠️ Обращение не найдено.", show_alert=True)
+        return
+
+    if ticket["status"] == "closed":
         await callback.answer("⚠️ На это обращение уже ответили.", show_alert=True)
-        await bot.edit_message_reply_markup(chat_id=admin_id, message_id=callback.message.message_id, reply_markup=None)
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=callback.message.chat.id,
+                message_id=callback.message.message_id,
+                reply_markup=None,
+            )
+        except TelegramBadRequest:
+            pass
         return
 
     await callback.message.answer(f"⌨️ Введите ответ на обращение #{ticket_id}:")
@@ -795,53 +856,62 @@ async def process_reply_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_answer)
     await callback.answer()
 
+
 @dp.message(AdminStates.waiting_for_answer, F.text)
 async def process_admin_answer(message: Message, state: FSMContext):
-    pool = db_pool
-    answer_text = message.text
-    admin_id = message.from_user.id
-    admin_name = message.from_user.full_name
+    answer_text = message.text.strip()
+    if not answer_text:
+        await message.answer("❌ Ответ не может быть пустым.")
+        return
 
     state_data = await state.get_data()
     ticket_id = state_data.get("answering_ticket_id")
     original_message_id = state_data.get("original_message_id")
+    admin_id = message.from_user.id
+    admin_name = message.from_user.full_name
 
     await state.clear()
 
-    ticket = await services.get_ticket_by_id(pool, ticket_id)
+    if ticket_id is None:
+        await message.answer("❌ Ошибка: обращение не найдено.")
+        return
+
+    ticket = await services.get_ticket_by_id(db_pool, ticket_id)
     if not ticket:
         await message.answer("❌ Ошибка: обращение не найдено.")
         return
-    
-    user_id_to_reply = ticket['user_id']
-    await services.close_ticket(pool, ticket_id, admin_id, answer_text)
 
+    await services.close_ticket(db_pool, ticket_id, admin_id, answer_text)
     await message.answer(f"✅ Ваш ответ на обращение #{ticket_id} успешно отправлен пользователю.")
-    
-    await bot.edit_message_text(
-        chat_id=message.chat.id,
-        message_id=original_message_id,
-        text=f"{ticket['question']}\n\n✅ _Администратор {admin_name} ответил на это обращение._",
-        parse_mode="Markdown"
-    )
+
+    try:
+        await bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=original_message_id,
+            text=f"{ticket['question']}\n\n✅ _Администратор {admin_name} ответил на это обращение._",
+            parse_mode="Markdown",
+        )
+    except TelegramBadRequest:
+        pass
 
     user_reply_text = (
         f"💬 *Ответ администрации SoftClub по вашему обращению #{ticket_id}*\n\n"
         f"_{answer_text}_\n\n"
-        f"Надеемся, мы смогли вам помочь! 😊"
+        "Надеемся, мы смогли вам помочь! 😊"
     )
-    
+
     try:
-        await bot.send_message(user_id_to_reply, user_reply_text, parse_mode="Markdown")
+        await bot.send_message(ticket["user_id"], user_reply_text, parse_mode="Markdown")
     except Exception:
         await message.answer("⚠️ Не удалось доставить ответ пользователю.")
 
+
 async def main():
     global db_pool
-    pool = await sql.connect()
-    db_pool = pool
-    await sql.create_tables(pool)
+    db_pool = await sql.connect()
+    await sql.create_tables(db_pool)
     await dp.start_polling(bot)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     asyncio.run(main())
