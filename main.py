@@ -245,7 +245,7 @@ async def cmd_start(message: Message):
             "👑 *Добро пожаловать, администратор!*\n\n"
             "Вы можете просматривать новые вопросы и жалобы, отвечать на них и закрывать обращения.",
             parse_mode="Markdown",
-            reply_markup=buttons.get_admin_main_keyboard(),
+            reply_markup=buttons.get_admin_reply_keyboard(),
         )
         return
 
@@ -257,6 +257,107 @@ async def cmd_start(message: Message):
         "📝 /report — Отправить вопрос или жалобу администрации\n\n"
         "💡 _Выберите нужную команду выше или введите её._",
         parse_mode="Markdown",
+        reply_markup=buttons.get_user_reply_keyboard(),
+    )
+
+
+@dp.message(F.text == "📚 Курсы")
+async def user_courses_button(message: Message):
+    if is_group_chat(message.chat):
+        return
+    await cmd_courses(message)
+
+
+@dp.message(F.text == "📝 Написать в поддержку")
+async def user_report_button(message: Message, state: FSMContext):
+    if is_group_chat(message.chat):
+        return
+    await cmd_report(message, state)
+
+
+@dp.message(F.text == "📖 Помощь")
+async def user_help_button(message: Message):
+    if is_group_chat(message.chat):
+        return
+    await cmd_help(message)
+
+
+@dp.message(F.text == "📋 Вопросы")
+async def admin_tickets_button(message: Message):
+    if is_group_chat(message.chat):
+        return
+    if not await services.is_admin(db_pool, message.from_user.id):
+        await message.answer("⚠️ У вас нет прав администратора.")
+        return
+
+    tickets = await services.get_open_tickets(db_pool)
+    if not tickets:
+        await message.answer(
+            "📭 Нет новых вопросов и жалоб. Все обращения уже закрыты.",
+            reply_markup=buttons.get_admin_main_keyboard(),
+        )
+        return
+
+    lines = []
+    for ticket in tickets:
+        preview = ticket["question"].replace("\n", " ")[:70]
+        if len(ticket["question"]) > 70:
+            preview += "..."
+        lines.append(f"#{ticket['ticket_id']} • {ticket['user_name']} • {preview}")
+
+    text = "📋 *Неотвеченные вопросы и жалобы:*\n\n" + "\n".join(lines)
+    await message.answer(text, parse_mode="Markdown", reply_markup=buttons.get_admin_ticket_list_keyboard(tickets))
+
+
+@dp.message(F.text == "📣 Рассылка")
+async def admin_broadcast_button(message: Message, state: FSMContext):
+    if is_group_chat(message.chat):
+        return
+    if not await services.is_admin(db_pool, message.from_user.id):
+        await message.answer("⚠️ У вас нет прав администратора.")
+        return
+
+    await message.answer("📣 Куда отправлять рассылку?", reply_markup=buttons.get_broadcast_mode_keyboard())
+    await state.update_data(broadcast_all=False, selected_chat_ids=[])
+
+
+@dp.message(F.text == "🧑‍🏫 Курсы")
+async def admin_courses_button(message: Message):
+    if is_group_chat(message.chat):
+        return
+    if not await services.is_admin(db_pool, message.from_user.id):
+        await message.answer("⚠️ У вас нет прав администратора.")
+        return
+
+    courses = []
+    for lang in ("ru", "en", "tj"):
+        courses.extend(await services.get_courses_by_lang(db_pool, lang))
+
+    keyboard_rows = [[InlineKeyboardButton(text="➕ Добавить курс", callback_data="admin_add_course")]]
+    for course in courses:
+        keyboard_rows.append([
+            InlineKeyboardButton(
+                text=f"{course['lang']} • {course['slug']} — {course['title']}",
+                callback_data=f"admin_course:{course['course_id']}",
+            )
+        ])
+    keyboard_rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data="admin_open_tickets")])
+
+    await message.answer("🛠 Управление курсами:", reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_rows))
+
+
+@dp.message(F.text == "👥 Группы")
+async def admin_groups_button(message: Message):
+    if is_group_chat(message.chat):
+        return
+    if not await services.is_admin(db_pool, message.from_user.id):
+        await message.answer("⚠️ У вас нет прав администратора.")
+        return
+
+    chats = await services.get_registered_chats(db_pool)
+    await message.answer(
+        "👥 Подключённые группы:\n\nВыберите группу для удаления из списка рассылки.",
+        reply_markup=buttons.get_group_list_keyboard(chats),
     )
 
 

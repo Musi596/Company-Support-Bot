@@ -51,7 +51,7 @@ async def create_tables(pool: asyncpg.Pool) -> None:
                 CONSTRAINT fk_tickets_user FOREIGN KEY (user_id)
                     REFERENCES users(user_id) ON DELETE CASCADE
             );
-
+            
             CREATE TABLE IF NOT EXISTS bot_chats (
                 chat_id BIGINT PRIMARY KEY,
                 chat_type VARCHAR(40) NOT NULL,
