@@ -857,11 +857,14 @@ async def process_reply_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.message(AdminStates.waiting_for_answer, F.text)
+@dp.message(AdminStates.waiting_for_answer, F.text | F.photo)
 async def process_admin_answer(message: Message, state: FSMContext):
-    answer_text = message.text.strip()
-    if not answer_text:
-        await message.answer("❌ Ответ не может быть пустым.")
+    # allow admins to reply with text, photo, or both
+    text_part = (message.text or "").strip()
+    photo_file_id = message.photo[-1].file_id if message.photo else None
+
+    if not text_part and not photo_file_id:
+        await message.answer("❌ Ответ не может быть пустым. Отправьте текст или фото.")
         return
 
     state_data = await state.get_data()
@@ -881,7 +884,8 @@ async def process_admin_answer(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка: обращение не найдено.")
         return
 
-    await services.close_ticket(db_pool, ticket_id, admin_id, answer_text)
+    # save ticket close with the text part (if any)
+    await services.close_ticket(db_pool, ticket_id, admin_id, text_part or "(ответ приложен в виде фото)")
     await message.answer(f"✅ Ваш ответ на обращение #{ticket_id} успешно отправлен пользователю.")
 
     try:
@@ -894,14 +898,26 @@ async def process_admin_answer(message: Message, state: FSMContext):
     except TelegramBadRequest:
         pass
 
-    user_reply_text = (
-        f"💬 *Ответ администрации SoftClub по вашему обращению #{ticket_id}*\n\n"
-        f"_{answer_text}_\n\n"
-        "Надеемся, мы смогли вам помочь! 😊"
-    )
+    user_reply_caption = None
+    if text_part and photo_file_id:
+        # prefer using admin text as caption for the photo
+        user_reply_caption = f"💬 *Ответ администрации SoftClub по вашему обращению #{ticket_id}*\n\n_{text_part}_"
+    elif text_part:
+        user_reply_caption = (
+            f"💬 *Ответ администрации SoftClub по вашему обращению #{ticket_id}*\n\n_{text_part}_\n\n"
+            "Надеемся, мы смогли вам помочь! 😊"
+        )
 
     try:
-        await bot.send_message(ticket["user_id"], user_reply_text, parse_mode="Markdown")
+        if photo_file_id:
+            await bot.send_photo(
+                ticket["user_id"],
+                photo=photo_file_id,
+                caption=user_reply_caption or f"💬 Ответ администрации (#{ticket_id})",
+                parse_mode="Markdown" if user_reply_caption else None,
+            )
+        elif user_reply_caption:
+            await bot.send_message(ticket["user_id"], user_reply_caption, parse_mode="Markdown")
     except Exception:
         await message.answer("⚠️ Не удалось доставить ответ пользователю.")
 
